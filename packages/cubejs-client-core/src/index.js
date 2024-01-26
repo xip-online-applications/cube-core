@@ -106,12 +106,12 @@ class CubejsApi {
     const loadImpl = async (response, next) => {
       const requestInstance = await requestPromise;
 
-      const subscribeNext = async () => {
+      const subscribeNext = async (additionalWait = 0) => {
         if (options.subscribe && !unsubscribed) {
           if (requestInstance.unsubscribe) {
             return next();
           } else {
-            await new Promise(resolve => setTimeout(() => resolve(), this.pollInterval * 1000));
+            await new Promise(resolve => setTimeout(() => resolve(), (this.pollInterval * 1000) + additionalWait));
             return next();
           }
         }
@@ -169,7 +169,7 @@ class CubejsApi {
           throw error;
         }
 
-        return subscribeNext();
+        return subscribeNext(1000 * 60 * 5);
       }
       await checkMutex();
       if (!options.subscribe && requestInstance.unsubscribe) {
@@ -307,14 +307,36 @@ class CubejsApi {
     });
   }
 
+  validQuery(query) {
+    if (!query) {
+      return false;
+    }
+
+    if (query.measures?.length === 0 && query.dimensions?.length === 0) {
+      return false;
+    }
+
+    return true;
+  }
+
   load(query, options, callback, responseFormat = ResultType.DEFAULT) {
+    let validQuery = true;
     if (responseFormat === ResultType.COMPACT) {
       if (Array.isArray(query)) {
-        query = query.map((q) => this.patchQueryInternal(q, ResultType.COMPACT));
+        query = query.map((q) => {
+          validQuery = validQuery && this.validQuery(q);
+          return this.patchQueryInternal(q, ResultType.COMPACT)
+        });
       } else {
+        validQuery = this.validQuery(query);
         query = this.patchQueryInternal(query, ResultType.COMPACT);
       }
     }
+
+    if (!validQuery) {
+      return null
+    }
+
     return this.loadMethod(
       () => this.request('load', {
         query,
