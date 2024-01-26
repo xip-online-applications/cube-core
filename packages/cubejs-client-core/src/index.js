@@ -312,7 +312,10 @@ class CubejsApi {
       return false;
     }
 
-    if (query.measures?.length === 0 && query.dimensions?.length === 0) {
+    const hasDimensions = query.dimensions && query.dimensions.length > 0;
+    const hasMeasures = query.measures && query.measures.length > 0;
+    
+    if (!hasDimensions && !hasMeasures) {
       return false;
     }
 
