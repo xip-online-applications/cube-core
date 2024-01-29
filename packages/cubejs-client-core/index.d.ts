@@ -1080,7 +1080,7 @@ declare module '@cubejs-client/core' {
     load<QueryType extends DeeplyReadonly<Query | Query[]>>(
       query: QueryType,
       options?: LoadMethodOptions,
-    ): Promise<ResultSet<QueryRecordType<QueryType>>>;
+    ): Promise<ResultSet<QueryRecordType<QueryType>>> | null;
     /**
      * Fetch data for the passed `query`.
      *
@@ -1109,14 +1109,14 @@ declare module '@cubejs-client/core' {
       query: QueryType,
       options?: LoadMethodOptions,
       callback?: LoadMethodCallback<ResultSet<QueryRecordType<QueryType>>>,
-    ): UnsubscribeObj;
+    ): UnsubscribeObj | null;
 
     load<QueryType extends DeeplyReadonly<Query | Query[]>>(
       query: QueryType,
       options?: LoadMethodOptions,
       callback?: LoadMethodCallback<ResultSet>,
       responseFormat?: string
-    ): Promise<ResultSet<QueryRecordType<QueryType>>>;
+    ): Promise<ResultSet<QueryRecordType<QueryType>>> | null;
 
     /**
      * Allows you to fetch data and receive updates over time. See [Real-Time Data Fetch](/product/apis-integrations/rest-api/real-time-data-fetch)
@@ -1150,7 +1150,7 @@ declare module '@cubejs-client/core' {
       query: QueryType,
       options: LoadMethodOptions | null,
       callback: LoadMethodCallback<ResultSet<QueryRecordType<QueryType>>>,
-    ): UnsubscribeObj;
+    ): UnsubscribeObj | null;
 
     sql(query: DeeplyReadonly<Query | Query[]>, options?: LoadMethodOptions): Promise<SqlQuery>;
     /**
