@@ -352,13 +352,24 @@ class CubejsApi {
   }
 
   subscribe(query, options, callback, responseFormat = ResultType.DEFAULT) {
+    let validQuery = true;
+
     if (responseFormat === ResultType.COMPACT) {
       if (Array.isArray(query)) {
-        query = query.map((q) => this.patchQueryInternal(q, ResultType.COMPACT));
+        query = query.map((q) => {
+          validQuery = validQuery && this.validQuery(q);
+          return this.patchQueryInternal(q, ResultType.COMPACT)
+        });
       } else {
+        validQuery = this.validQuery(query);
         query = this.patchQueryInternal(query, ResultType.COMPACT);
       }
     }
+
+    if (!validQuery) {
+      return null
+    }
+    
     return this.loadMethod(
       () => this.request('subscribe', {
         query,
