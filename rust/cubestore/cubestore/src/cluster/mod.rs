@@ -134,15 +134,16 @@ pub trait Cluster: DIService + Send + Sync {
     async fn add_memory_chunk(
         &self,
         node_name: &str,
-        chunk_id: u64,
+        chunk_name: String,
         batch: RecordBatch,
     ) -> Result<(), CubeError>;
 
-    async fn free_memory_chunk(&self, node_name: &str, chunk_id: u64) -> Result<(), CubeError>;
+    async fn free_memory_chunk(&self, node_name: &str, chunk_name: String)
+        -> Result<(), CubeError>;
     async fn free_deleted_memory_chunks(
         &self,
         node_name: &str,
-        chunk_ids: Vec<u64>,
+        chunk_names: Vec<String>,
     ) -> Result<(), CubeError>;
 
     fn job_result_listener(&self) -> JobResultListener;
@@ -173,6 +174,7 @@ crate::di_service!(MockCluster, [Cluster]);
 pub enum JobEvent {
     Started(RowKey, JobType),
     Success(RowKey, JobType),
+    Orphaned(RowKey, JobType),
     Error(RowKey, JobType, String),
 }
 
@@ -501,7 +503,7 @@ impl Cluster for ClusterImpl {
     async fn add_memory_chunk(
         &self,
         node_name: &str,
-        chunk_id: u64,
+        chunk_name: String,
         batch: RecordBatch,
     ) -> Result<(), CubeError> {
         let record_batch = SerializedRecordBatchStream::write(&batch.schema(), vec![batch])?;
@@ -509,7 +511,7 @@ impl Cluster for ClusterImpl {
             .send_or_process_locally(
                 node_name,
                 NetworkMessage::AddMemoryChunk {
-                    chunk_id,
+                    chunk_name,
                     data: record_batch.into_iter().next().unwrap(),
                 },
             )
@@ -520,9 +522,13 @@ impl Cluster for ClusterImpl {
         }
     }
 
-    async fn free_memory_chunk(&self, node_name: &str, chunk_id: u64) -> Result<(), CubeError> {
+    async fn free_memory_chunk(
+        &self,
+        node_name: &str,
+        chunk_name: String,
+    ) -> Result<(), CubeError> {
         let response = self
-            .send_or_process_locally(node_name, NetworkMessage::FreeMemoryChunk { chunk_id })
+            .send_or_process_locally(node_name, NetworkMessage::FreeMemoryChunk { chunk_name })
             .await?;
         match response {
             NetworkMessage::FreeMemoryChunkResult(r) => r,
@@ -533,12 +539,12 @@ impl Cluster for ClusterImpl {
     async fn free_deleted_memory_chunks(
         &self,
         node_name: &str,
-        chunk_ids: Vec<u64>,
+        chunk_names: Vec<String>,
     ) -> Result<(), CubeError> {
         let response = self
             .send_or_process_locally(
                 node_name,
-                NetworkMessage::FreeDeletedMemoryChunks(chunk_ids),
+                NetworkMessage::FreeDeletedMemoryChunks(chunk_names),
             )
             .await?;
         match response {
@@ -657,7 +663,7 @@ impl Cluster for ClusterImpl {
             | NetworkMessage::ExplainAnalyzeResult(_) => {
                 panic!("result sent to worker");
             }
-            NetworkMessage::AddMemoryChunk { chunk_id, data } => {
+            NetworkMessage::AddMemoryChunk { chunk_name, data } => {
                 let res = match data.read() {
                     Ok(batch) => {
                         let chunk_store = self
@@ -666,7 +672,7 @@ impl Cluster for ClusterImpl {
                             .unwrap()
                             .get_service_typed::<dyn ChunkDataStore>()
                             .await;
-                        chunk_store.add_memory_chunk(chunk_id, batch).await
+                        chunk_store.add_memory_chunk(chunk_name, batch).await
                     }
                     Err(e) => Err(e),
                 };
@@ -675,24 +681,24 @@ impl Cluster for ClusterImpl {
             NetworkMessage::AddMemoryChunkResult(_) => {
                 panic!("AddChunkResult sent to worker");
             }
-            NetworkMessage::FreeMemoryChunk { chunk_id } => {
+            NetworkMessage::FreeMemoryChunk { chunk_name } => {
                 let chunk_store = self
                     .injector
                     .upgrade()
                     .unwrap()
                     .get_service_typed::<dyn ChunkDataStore>()
                     .await;
-                let res = chunk_store.free_memory_chunk(chunk_id).await;
+                let res = chunk_store.free_memory_chunk(chunk_name).await;
                 NetworkMessage::FreeMemoryChunkResult(res)
             }
-            NetworkMessage::FreeDeletedMemoryChunks(ids) => {
+            NetworkMessage::FreeDeletedMemoryChunks(names) => {
                 let chunk_store = self
                     .injector
                     .upgrade()
                     .unwrap()
                     .get_service_typed::<dyn ChunkDataStore>()
                     .await;
-                let res = chunk_store.free_deleted_memory_chunks(ids).await;
+                let res = chunk_store.free_deleted_memory_chunks(names).await;
                 NetworkMessage::FreeDeletedMemoryChunksResult(res)
             }
             NetworkMessage::FreeMemoryChunkResult(_) => {
@@ -819,6 +825,10 @@ impl JobResultListener {
                             new.get_row().row_reference().clone(),
                             new.get_row().job_type().clone(),
                             "Job timed out".to_string(),
+                        )),
+                        JobStatus::Orphaned => Some(JobEvent::Orphaned(
+                            new.get_row().row_reference().clone(),
+                            new.get_row().job_type().clone(),
                         )),
                         JobStatus::Error(e) => Some(JobEvent::Error(
                             new.get_row().row_reference().clone(),

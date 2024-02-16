@@ -890,7 +890,15 @@ impl CubeScanWrapperNode {
                             match c.relation.as_ref() {
                                 Some(r) => format!(
                                     "{}.{}",
-                                    r,
+                                    sql_generator
+                                        .get_sql_templates()
+                                        .quote_identifier(&r)
+                                        .map_err(|e| {
+                                            DataFusionError::Internal(format!(
+                                                "Can't generate SQL for column: {}",
+                                                e
+                                            ))
+                                        })?,
                                     sql_generator
                                         .get_sql_templates()
                                         .quote_identifier(&c.name)
@@ -1174,7 +1182,21 @@ impl CubeScanWrapperNode {
                 // Expr::TableUDF { .. } => {}
                 Expr::Literal(literal) => {
                     Ok(match literal {
-                        // ScalarValue::Boolean(b) => {}
+                        ScalarValue::Boolean(b) => (
+                            b.map(|b| {
+                                sql_generator
+                                    .get_sql_templates()
+                                    .literal_bool_expr(b)
+                                    .map_err(|e| {
+                                        DataFusionError::Internal(format!(
+                                            "Can't generate SQL for literal bool: {}",
+                                            e
+                                        ))
+                                    })
+                            })
+                            .unwrap_or(Ok("NULL".to_string()))?,
+                            sql_query,
+                        ),
                         ScalarValue::Float32(f) => (
                             f.map(|f| format!("{}", f)).unwrap_or("NULL".to_string()),
                             sql_query,
@@ -1320,6 +1342,7 @@ impl CubeScanWrapperNode {
                         }
                         // ScalarValue::IntervalMonthDayNano(_) => {}
                         // ScalarValue::Struct(_, _) => {}
+                        ScalarValue::Null => ("NULL".to_string(), sql_query),
                         x => {
                             return Err(DataFusionError::Internal(format!(
                                 "Can't generate SQL for literal: {:?}",

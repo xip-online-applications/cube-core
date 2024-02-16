@@ -1,6 +1,6 @@
 use std::{any::type_name, collections::HashMap, convert::TryFrom, sync::Arc, thread};
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, Days, Duration, Months, NaiveDate, NaiveDateTime, NaiveTime};
 use datafusion::{
     arrow::{
         array::{
@@ -14,8 +14,8 @@ use datafusion::{
         compute::{cast, cast_with_options, concat, CastOptions},
         datatypes::{
             DataType, Date32Type, Field, Float64Type, Int32Type, Int64Type, IntervalDayTimeType,
-            IntervalUnit, IntervalYearMonthType, TimeUnit, TimestampNanosecondType, UInt32Type,
-            UInt64Type,
+            IntervalMonthDayNanoType, IntervalUnit, IntervalYearMonthType, TimeUnit,
+            TimestampNanosecondType, UInt32Type, UInt64Type,
         },
     },
     error::{DataFusionError, Result},
@@ -395,17 +395,31 @@ pub fn create_isnull_udf() -> ScalarUDF {
                 Arc::new(builder.finish()) as ArrayRef
             }
             2 => {
-                if args[0].data_type() != &DataType::Utf8 || args[1].data_type() != &DataType::Utf8
-                {
-                    return Err(DataFusionError::Internal(format!(
-                        "isnull with 2 arguments supports only (Utf8, Utf8), actual: ({}, {})",
-                        args[0].data_type(),
-                        args[1].data_type(),
-                    )));
-                }
+                let expr = match args[0].data_type() {
+                    DataType::Utf8 => Arc::clone(&args[0]),
+                    DataType::Null => cast(&args[0], &DataType::Utf8)?,
+                    _ => {
+                        return Err(DataFusionError::Internal(format!(
+                            "isnull with 2 arguments supports only (Utf8, Utf8), actual: ({}, {})",
+                            args[0].data_type(),
+                            args[1].data_type(),
+                        )))
+                    }
+                };
+                let replacement = match args[1].data_type() {
+                    DataType::Utf8 => Arc::clone(&args[1]),
+                    DataType::Null => cast(&args[1], &DataType::Utf8)?,
+                    _ => {
+                        return Err(DataFusionError::Internal(format!(
+                            "isnull with 2 arguments supports only (Utf8, Utf8), actual: ({}, {})",
+                            args[0].data_type(),
+                            args[1].data_type(),
+                        )))
+                    }
+                };
 
-                let exprs = downcast_string_arg!(&args[0], "expr", i32);
-                let replacements = downcast_string_arg!(&args[1], "replacement", i32);
+                let exprs = downcast_string_arg!(expr, "expr", i32);
+                let replacements = downcast_string_arg!(replacement, "replacement", i32);
 
                 let result = exprs
                     .iter()
@@ -1166,6 +1180,15 @@ pub fn create_date_add_udf() -> ScalarUDF {
                 true
             )
         }
+        DataType::Interval(IntervalUnit::MonthDayNano) => {
+            date_math_udf!(
+                args,
+                TimestampNanosecondType,
+                IntervalMonthDayNanoType,
+                date_addsub_month_day_nano,
+                true
+            )
+        }
         _ => Err(DataFusionError::Execution(format!(
             "unsupported interval type"
         ))),
@@ -1193,6 +1216,14 @@ pub fn create_date_add_udf() -> ScalarUDF {
                 TypeSignature::Exact(vec![
                     DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".to_string())),
                     DataType::Interval(IntervalUnit::YearMonth),
+                ]),
+                TypeSignature::Exact(vec![
+                    DataType::Timestamp(TimeUnit::Nanosecond, None),
+                    DataType::Interval(IntervalUnit::MonthDayNano),
+                ]),
+                TypeSignature::Exact(vec![
+                    DataType::Timestamp(TimeUnit::Nanosecond, Some("UTC".to_string())),
+                    DataType::Interval(IntervalUnit::MonthDayNano),
                 ]),
             ],
             Volatility::Immutable,
@@ -1317,6 +1348,36 @@ fn date_addsub_year_month(t: NaiveDateTime, i: i32, is_add: bool) -> Result<Naiv
             )))
         }
     };
+}
+
+fn date_addsub_month_day_nano(t: NaiveDateTime, i: i128, is_add: bool) -> Result<NaiveDateTime> {
+    let month = (i >> (64 + 32)) & 0xFFFFFFFF;
+    let day = (i >> 64) & 0xFFFFFFFF;
+    let nano = i & 0xFFFFFFFFFFFFFFFF;
+
+    let result = if month > 0 && is_add || month < 0 && !is_add {
+        t.checked_add_months(Months::new(month as u32))
+    } else {
+        t.checked_sub_months(Months::new(month.abs() as u32))
+    };
+
+    let result = if day > 0 && is_add || day < 0 && !is_add {
+        result.and_then(|t| t.checked_add_days(Days::new(day as u64)))
+    } else {
+        result.and_then(|t| t.checked_sub_days(Days::new(day.abs() as u64)))
+    };
+
+    let result = result.and_then(|t| {
+        t.checked_add_signed(Duration::nanoseconds(
+            (nano as i64) * (if !is_add { -1 } else { 1 }),
+        ))
+    });
+    result.ok_or_else(|| {
+        DataFusionError::Execution(format!(
+            "Failed to add interval: {} month {} day {} nano",
+            month, day, nano
+        ))
+    })
 }
 
 fn date_addsub_day_time(t: NaiveDateTime, interval: i64, is_add: bool) -> Result<NaiveDateTime> {
@@ -2763,6 +2824,77 @@ pub fn create_has_schema_privilege_udf(state: Arc<SessionState>) -> ScalarUDF {
     )
 }
 
+pub fn create_has_table_privilege_udf(state: Arc<SessionState>) -> ScalarUDF {
+    let fun = make_scalar_function(move |args: &[ArrayRef]| {
+        let (users, tables, privileges) = if args.len() == 3 {
+            (
+                Some(downcast_string_arg!(args[0], "user", i32)),
+                downcast_string_arg!(args[1], "table", i32),
+                downcast_string_arg!(args[2], "privilege", i32),
+            )
+        } else {
+            (
+                None,
+                downcast_string_arg!(args[0], "table", i32),
+                downcast_string_arg!(args[1], "privilege", i32),
+            )
+        };
+
+        let result = izip!(tables, privileges)
+            .enumerate()
+            .map(|(i, args)| {
+                Ok(match args {
+                    (Some(_table), Some(privilege)) => {
+                        match (users, state.user()) {
+                            (Some(users), Some(session_user)) => {
+                                let user = users.value(i);
+                                if user != session_user {
+                                    return Err(DataFusionError::Execution(format!(
+                                        "role \"{}\" does not exist",
+                                        user
+                                    )));
+                                }
+                            }
+                            _ => (),
+                        }
+
+                        // TODO: check if table exists
+
+                        match privilege {
+                            "SELECT" => Some(true),
+                            "UPDATE" | "INSERT" | "DELETE" => Some(false),
+                            _ => {
+                                return Err(DataFusionError::Execution(format!(
+                                    "unrecognized privilege type: \"{}\"",
+                                    privilege
+                                )))
+                            }
+                        }
+                    }
+                    _ => None,
+                })
+            })
+            .collect::<Result<BooleanArray>>();
+
+        Ok(Arc::new(result?))
+    });
+
+    let return_type: ReturnTypeFunction = Arc::new(move |_| Ok(Arc::new(DataType::Boolean)));
+
+    ScalarUDF::new(
+        "has_table_privilege",
+        &Signature::one_of(
+            vec![
+                TypeSignature::Exact(vec![DataType::Utf8, DataType::Utf8, DataType::Utf8]),
+                TypeSignature::Exact(vec![DataType::Utf8, DataType::Utf8]),
+            ],
+            Volatility::Stable,
+        ),
+        &return_type,
+        &fun,
+    )
+}
+
 pub fn create_pg_total_relation_size_udf() -> ScalarUDF {
     let fun = make_scalar_function(move |args: &[ArrayRef]| {
         assert!(args.len() == 1);
@@ -3793,20 +3925,6 @@ pub fn register_fun_stubs(mut ctx: SessionContext) -> SessionContext {
     register_fun_stub!(
         udf,
         "has_server_privilege",
-        tsigs = [
-            [Utf8, Utf8],
-            [Oid, Utf8],
-            [Utf8, Utf8, Utf8],
-            [Utf8, Oid, Utf8],
-            [Oid, Utf8, Utf8],
-            [Oid, Oid, Utf8],
-        ],
-        rettyp = Boolean,
-        vol = Stable
-    );
-    register_fun_stub!(
-        udf,
-        "has_table_privilege",
         tsigs = [
             [Utf8, Utf8],
             [Oid, Utf8],

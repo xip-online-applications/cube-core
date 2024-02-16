@@ -6,6 +6,7 @@ pub mod common;
 pub mod dates;
 pub mod filters;
 pub mod members;
+pub mod old_split;
 pub mod order;
 pub mod split;
 pub mod utils;

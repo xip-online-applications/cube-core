@@ -32,12 +32,12 @@ use datafusion::{
 use egg::{EGraph, Id, Rewrite, Subst, Var};
 use std::{fmt::Display, ops::Index, sync::Arc};
 
-pub struct SplitRules {
+pub struct OldSplitRules {
     meta_context: Arc<MetaContext>,
     config_obj: Arc<dyn ConfigObj>,
 }
 
-impl RewriteRules for SplitRules {
+impl RewriteRules for OldSplitRules {
     fn rewrite_rules(&self) -> Vec<Rewrite<LogicalPlanLanguage, LogicalPlanAnalysis>> {
         let mut rules = vec![
             transforming_rewrite(
@@ -1392,18 +1392,6 @@ impl RewriteRules for SplitRules {
                     "?expr",
                     "?alias",
                     Some("?outer_column"),
-                ),
-            ),
-            // Redshift CHARINDEX to STRPOS
-            rewrite(
-                "redshift-charindex-to-strpos",
-                udf_expr(
-                    "charindex",
-                    vec!["?substring", "?string"],
-                ),
-                fun_expr(
-                    "Strpos",
-                    vec!["?string", "?substring"],
                 ),
             ),
             //
@@ -4631,7 +4619,7 @@ impl RewriteRules for SplitRules {
     }
 }
 
-impl SplitRules {
+impl OldSplitRules {
     pub fn new(meta_context: Arc<MetaContext>, config_obj: Arc<dyn ConfigObj>) -> Self {
         Self {
             meta_context,
@@ -5550,6 +5538,7 @@ impl SplitRules {
                                     let alias_expr_alias = egraph.add(
                                         LogicalPlanLanguage::AliasExprAlias(AliasExprAlias(alias)),
                                     );
+
                                     return egraph.add(LogicalPlanLanguage::AliasExpr([
                                         column_expr,
                                         alias_expr_alias,
