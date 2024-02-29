@@ -1232,6 +1232,23 @@ const variables: Record<string, (...args: any) => any> = {
   ),
 
   /** ****************************************************************
+   * Materialize Driver                                              *
+   ***************************************************************** */
+
+  /**
+   * Materialize cluster.
+   */
+  materializeCluster: ({
+    dataSource
+  }: {
+    dataSource: string,
+  }) => (
+    process.env[
+      keyByDataSource('CUBEJS_DB_MATERIALIZE_CLUSTER', dataSource)
+    ]
+  ),
+
+  /** ****************************************************************
    * Snowflake Driver                                                *
    ***************************************************************** */
 
@@ -1408,6 +1425,16 @@ const variables: Record<string, (...args: any) => any> = {
     ]
   ),
   
+  duckdbDatabasePath: ({
+    dataSource
+  }: {
+    dataSource: string,
+  }) => (
+    process.env[
+      keyByDataSource('CUBEJS_DB_DUCKDB_DATABASE_PATH', dataSource)
+    ]
+  ),
+
   duckdbS3Region: ({
     dataSource
   }: {

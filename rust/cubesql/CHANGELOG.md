@@ -3,6 +3,60 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.34.59](https://github.com/cube-js/cube.js/compare/v0.34.58...v0.34.59) (2024-02-28)
+
+
+### Bug Fixes
+
+* **cubesql:** Replace only simple ungrouped measures in projections to avoid aggregate over aggregate statements ([#7852](https://github.com/cube-js/cube.js/issues/7852)) ([fa2a89b](https://github.com/cube-js/cube.js/commit/fa2a89b89f91c8eba175130fca33975200690288))
+
+
+
+
+
+## [0.34.58](https://github.com/cube-js/cube.js/compare/v0.34.57...v0.34.58) (2024-02-27)
+
+
+### Bug Fixes
+
+* **cubesql:** Ambiguous reference in case of same two 16 char prefixes are in query ([5051f66](https://github.com/cube-js/cube.js/commit/5051f663b4142735ee1cc455936300f765de62a7))
+
+
+
+
+
+## [0.34.57](https://github.com/cube-js/cube.js/compare/v0.34.56...v0.34.57) (2024-02-26)
+
+
+### Bug Fixes
+
+* **cubesql:** Can't find rewrite due to AST node limit reached for remaining non-equivalent date and timestamp constant folding rules ([b79f697](https://github.com/cube-js/cube.js/commit/b79f69739e2b8cb74cfc86db72fa7157dd723960))
+* **cubesql:** Support `Z` postfix in `Timestamp` response transformation ([c013c91](https://github.com/cube-js/cube.js/commit/c013c913bbeb8dabacc508240ab94956f1172a8b))
+* **cubesql:** Timestamp equals filter support ([754a0df](https://github.com/cube-js/cube.js/commit/754a0df3a20cae5269e961649a01fb5047906645))
+
+
+### Features
+
+* **cubesql:** `WHERE` SQL push down ([#7808](https://github.com/cube-js/cube.js/issues/7808)) ([98b5709](https://github.com/cube-js/cube.js/commit/98b570946905586f16a502f83b0a1cf8e4aa92a6))
+* **cubesql:** Allow replacement of aggregation functions in SQL push down ([#7811](https://github.com/cube-js/cube.js/issues/7811)) ([97fa757](https://github.com/cube-js/cube.js/commit/97fa757a0d22e6d7d9432d686005765b28271f7c))
+* **cubesql:** Support placeholders in `OFFSET`, `FETCH ...` ([60aad90](https://github.com/cube-js/cube.js/commit/60aad90a237800f4471bb4efa10ec590b50e19fe))
+* **cubesql:** Support temporary tables ([7022611](https://github.com/cube-js/cube.js/commit/702261156fc3748fc7d3103f28bd4f4648fd4e0b))
+
+
+
+
+
+## [0.34.56](https://github.com/cube-js/cube.js/compare/v0.34.55...v0.34.56) (2024-02-20)
+
+
+### Bug Fixes
+
+* **cubesql:** Allow `NULL` values in `CASE` ([a97acdc](https://github.com/cube-js/cube.js/commit/a97acdc996dd68a0e2c00c155dfe30a863440ecc))
+
+
+
+
+
 ## [0.34.55](https://github.com/cube-js/cube.js/compare/v0.34.54...v0.34.55) (2024-02-15)
 
 
