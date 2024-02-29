@@ -11,7 +11,7 @@ pub use datafusion::{
     arrow::{
         array::{
             ArrayRef, BooleanBuilder, Date32Builder, DecimalBuilder, Float64Builder, Int32Builder,
-            Int64Builder, StringBuilder,
+            Int64Builder, NullArray, StringBuilder,
         },
         datatypes::{DataType, SchemaRef},
         error::{ArrowError, Result as ArrowResult},
@@ -1051,6 +1051,7 @@ pub fn transform_response<V: ValueObject>(
                             let timestamp = NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%dT%H:%M:%S.%f")
                                 .or_else(|_| NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%d %H:%M:%S.%f"))
                                 .or_else(|_| NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%dT%H:%M:%S"))
+                                .or_else(|_| NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%dT%H:%M:%S.%fZ"))
                                 .map_err(|e| {
                                     DataFusionError::Execution(format!(
                                         "Can't parse timestamp: '{}': {}",
@@ -1081,6 +1082,7 @@ pub fn transform_response<V: ValueObject>(
                             let timestamp = NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%dT%H:%M:%S.%f")
                                 .or_else(|_| NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%d %H:%M:%S.%f"))
                                 .or_else(|_| NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%dT%H:%M:%S"))
+                                .or_else(|_| NaiveDateTime::parse_from_str(s.as_str(), "%Y-%m-%dT%H:%M:%S.%fZ"))
                                 .map_err(|e| {
                                     DataFusionError::Execution(format!(
                                         "Can't parse timestamp: '{}': {}",
@@ -1187,6 +1189,11 @@ pub fn transform_response<V: ValueObject>(
                         },
                     }
                 )
+            }
+            DataType::Null => {
+                let len = response.len()?;
+                let array = NullArray::new(len);
+                Arc::new(array)
             }
             t => {
                 return Err(CubeError::user(format!(

@@ -1233,6 +1233,7 @@ class ApiGateway {
       ...query,
       measures: (query.measures || []).map(m => (typeof m === 'string' ? this.parseMemberExpression(m) : m)),
       dimensions: (query.dimensions || []).map(m => (typeof m === 'string' ? this.parseMemberExpression(m) : m)),
+      segments: (query.segments || []).map(m => (typeof m === 'string' ? this.parseMemberExpression(m) : m)),
     };
   }
 
@@ -1707,7 +1708,7 @@ class ApiGateway {
       }
 
       const [queryType, normalizedQueries] =
-        await this.getNormalizedQueries(query, context);
+        await this.getNormalizedQueries(query, context, request.streaming);
 
       const compilerApi = await this.getCompilerApi(context);
       let metaConfigResult = await compilerApi.metaConfig({
