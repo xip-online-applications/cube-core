@@ -107,9 +107,17 @@ class CubejsApi {
       const requestInstance = await requestPromise;
 
       const subscribeNext = async (additionalWait = 0) => {
+        if (additionalWait > 0) {
+          await new Promise(resolve => setTimeout(() => resolve(), additionalWait));
+        }
+
         if (options.subscribe && !unsubscribed) {
-          await new Promise(resolve => setTimeout(() => resolve(), (this.pollInterval * 1000) + additionalWait));
-          return next();
+          if (requestInstance.unsubscribe) {
+            return next();
+          } else {
+            await new Promise(resolve => setTimeout(() => resolve(), (this.pollInterval * 1000)));
+            return next();
+          }
         }
         return null;
       };
