@@ -127,6 +127,7 @@ type QueryRequest = BaseRequest & {
   exportAnnotatedSql?: boolean;
   memberExpressions?: boolean;
   disableExternalPreAggregations?: boolean;
+  disableLimitEnforcing?: boolean;
 };
 
 type SqlApiRequest = BaseRequest & {
@@ -176,19 +177,22 @@ type PreAggsJobsRequest = {
   resType?: 'object' | 'array'
 };
 
-type PreAggJobStatusItem = {
+type PreAggJobStatusItemNotFound = {
   token: string;
-  table: string;
+  status: 'not_found' | 'pre_agg_not_found';
+};
+
+type PreAggJobStatusItemFound = {
+  token: string;
   status: string;
+  table: string;
   selector: PreAggsSelector;
 };
 
+type PreAggJobStatusItem = PreAggJobStatusItemNotFound | PreAggJobStatusItemFound;
+
 type PreAggJobStatusObject = {
-  [token: string]: {
-    table: string;
-    status: string;
-    selector: PreAggsSelector;
-  }
+  [token: string]: Omit<PreAggJobStatusItem, 'token'>
 };
 
 type PreAggJobStatusResponse =

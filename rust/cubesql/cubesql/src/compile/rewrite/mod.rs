@@ -267,7 +267,9 @@ crate::plan_to_language! {
             offset: Option<usize>,
             order_expr: Vec<Expr>,
             alias: Option<String>,
+            distinct: bool,
             ungrouped: bool,
+            ungrouped_scan: bool,
         },
         WrappedSelectJoin {
             input: Arc<LogicalPlan>,
@@ -450,6 +452,12 @@ crate::plan_to_language! {
             ungrouped: bool,
             in_projection: bool,
             cube_members: Vec<LogicalPlan>,
+        },
+        FlattenPushdownReplacer {
+            expr: Arc<Expr>,
+            inner_expr: Vec<Expr>,
+            inner_alias: Option<String>,
+            top_level: bool,
         },
         // NOTE: converting this to a list might provide rewrite improvements
         CaseExprReplacer {
@@ -679,6 +687,33 @@ where
     .unwrap()
 }
 
+pub fn transforming_chain_rewrite_with_root<T>(
+    name: &str,
+    main_searcher: String,
+    chain: Vec<(&str, String)>,
+    applier: String,
+    transform_fn: T,
+) -> Rewrite<LogicalPlanLanguage, LogicalPlanAnalysis>
+where
+    T: Fn(&mut EGraph<LogicalPlanLanguage, LogicalPlanAnalysis>, Id, &mut Subst) -> bool
+        + Sync
+        + Send
+        + 'static,
+{
+    Rewrite::new(
+        name.to_string(),
+        ChainSearcher {
+            main: main_searcher.parse().unwrap(),
+            chain: chain
+                .into_iter()
+                .map(|(var, pattern)| (var.parse().unwrap(), pattern.parse().unwrap()))
+                .collect(),
+        },
+        TransformingPattern::new(applier.as_str(), transform_fn),
+    )
+    .unwrap()
+}
+
 fn list_expr(list_type: impl Display, list: Vec<impl Display>) -> String {
     let mut current = list_type.to_string();
     for i in list.into_iter().rev() {
@@ -787,10 +822,12 @@ fn wrapped_select(
     offset: impl Display,
     order_expr: impl Display,
     alias: impl Display,
+    distinct: impl Display,
     ungrouped: impl Display,
+    ungrouped_scan: impl Display,
 ) -> String {
     format!(
-        "(WrappedSelect {} {} {} {} {} {} {} {} {} {} {} {} {} {})",
+        "(WrappedSelect {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {})",
         select_type,
         projection_expr,
         group_expr,
@@ -804,7 +841,9 @@ fn wrapped_select(
         offset,
         order_expr,
         alias,
+        distinct,
         ungrouped,
+        ungrouped_scan
     )
 }
 
@@ -1294,6 +1333,18 @@ fn wrapper_pullup_replacer(
     )
 }
 
+fn flatten_pushdown_replacer(
+    expr: impl Display,
+    inner_expr: impl Display,
+    inner_alias: impl Display,
+    top_level: impl Display,
+) -> String {
+    format!(
+        "(FlattenPushdownReplacer {} {} {} {})",
+        expr, inner_expr, inner_alias, top_level,
+    )
+}
+
 fn event_notification(name: impl Display, members: impl Display, meta: impl Display) -> String {
     format!("(EventNotification {} {} {})", name, members, meta)
 }
@@ -1432,6 +1483,10 @@ fn cube_scan(
 
 fn cube_scan_wrapper(input: impl Display, finalized: impl Display) -> String {
     format!("(CubeScanWrapper {} {})", input, finalized)
+}
+
+fn distinct(input: impl Display) -> String {
+    format!("(Distinct {})", input)
 }
 
 pub fn original_expr_name(

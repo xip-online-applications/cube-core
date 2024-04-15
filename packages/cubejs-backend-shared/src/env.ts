@@ -152,7 +152,7 @@ const variables: Record<string, (...args: any) => any> = {
     .default('false')
     .asBoolStrict(),
   schemaPath: () => get('CUBEJS_SCHEMA_PATH')
-    .default('schema')
+    .default('model')
     .asString(),
   refreshWorkerMode: () => {
     const refreshWorkerMode = get('CUBEJS_REFRESH_WORKER').asBool();
@@ -624,7 +624,7 @@ const variables: Record<string, (...args: any) => any> = {
    * This will eventually default to true.
    */
   fetchColumnsByOrdinalPosition: (): boolean => get('CUBEJS_DB_FETCH_COLUMNS_BY_ORDINAL_POSITION')
-    .default('false')
+    .default('true')
     .asBoolStrict(),
 
   /** ****************************************************************
@@ -1551,7 +1551,7 @@ const variables: Record<string, (...args: any) => any> = {
   cubeStorePass: () => get('CUBEJS_CUBESTORE_PASS')
     .asString(),
   cubeStoreMaxConnectRetries: () => get('CUBEJS_CUBESTORE_MAX_CONNECT_RETRIES')
-    .default('10')
+    .default('20')
     .asInt(),
   cubeStoreNoHeartBeatTimeout: () => get('CUBEJS_CUBESTORE_NO_HEART_BEAT_TIMEOUT')
     .default('30')

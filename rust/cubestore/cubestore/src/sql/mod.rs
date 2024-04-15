@@ -1653,12 +1653,12 @@ mod tests {
     use crate::metastore::job::JobType;
     use crate::store::compaction::CompactionService;
     use async_compression::tokio::write::GzipEncoder;
+    use cuberockstore::rocksdb::{Options, DB};
     use futures_timer::Delay;
     use itertools::Itertools;
     use pretty_assertions::assert_eq;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
-    use rocksdb::{Options, DB};
     use tokio::io::{AsyncWriteExt, BufWriter};
     use uuid::Uuid;
 
@@ -1690,7 +1690,7 @@ mod tests {
         let store_path = path.to_string() + &"_store".to_string();
         let remote_store_path = path.to_string() + &"remote_store".to_string();
 
-        let _ = fs::remove_dir_all(path.clone());
+        let _ = fs::remove_dir_all(path);
         let _ = fs::remove_dir_all(store_path.clone());
         let _ = fs::remove_dir_all(remote_store_path.clone());
 
@@ -1766,7 +1766,7 @@ mod tests {
         let store_path = path.to_string() + &"_store".to_string();
         let remote_store_path = path.to_string() + &"remote_store".to_string();
 
-        let _ = fs::remove_dir_all(path.clone());
+        let _ = fs::remove_dir_all(path);
         let _ = fs::remove_dir_all(store_path.clone());
         let _ = fs::remove_dir_all(remote_store_path.clone());
 
@@ -1872,7 +1872,7 @@ mod tests {
         let store_path = path.to_string() + &"_store".to_string();
         let remote_store_path = path.to_string() + &"remote_store".to_string();
 
-        let _ = fs::remove_dir_all(path.clone());
+        let _ = fs::remove_dir_all(path);
         let _ = fs::remove_dir_all(store_path.clone());
         let _ = fs::remove_dir_all(remote_store_path.clone());
 

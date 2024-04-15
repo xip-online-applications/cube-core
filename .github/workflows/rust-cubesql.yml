@@ -6,14 +6,12 @@ on:
       - '.github/workflows/rust-cubesql.yml'
       - 'packages/cubejs-backend-native/**'
       - 'rust/cubesql/**'
-      - 'rust/cubesql/**'
     branches:
       - 'master'
   pull_request:
     paths:
       - '.github/workflows/rust-cubesql.yml'
       - 'packages/cubejs-backend-native/**'
-      - 'rust/cubesql/**'
       - 'rust/cubesql/**'
 
 jobs:
@@ -58,23 +56,17 @@ jobs:
         with:
           # pulls all commits (needed for codecov)
           fetch-depth: 2
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly-2022-06-22
-          override: true
-          components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ./rust/cubesql -> target
           # default key
           key: cubesql-${{ runner.OS }}-x86_64-unknown-linux-gnu-16
           shared-key: cubesql-${{ runner.OS }}-x86_64-unknown-linux-gnu-16
-      - name: Install tarpaulin@0.20.1
-        uses: baptiste0928/cargo-install@v2
+      - name: Install tarpaulin@0.25.2
+        uses: baptiste0928/cargo-install@v3
         with:
           crate: cargo-tarpaulin
-          version: "0.20.1"
+          version: "0.25.2"
       - name: Unit tests (Rewrite Engine)
         env:
           CUBESQL_TESTING_CUBE_TOKEN: ${{ secrets.CUBESQL_TESTING_CUBE_TOKEN }}
@@ -131,7 +123,7 @@ jobs:
     strategy:
       matrix:
         # Current used version + 1 LTS
-        node-version: [16, 18]
+        node-version: [18, 20]
         python-version: ["3.9", "3.10", "3.11", "3.12", "fallback"]
         target: ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
         # minimize number of jobs
@@ -144,7 +136,7 @@ jobs:
             target: "aarch64-unknown-linux-gnu"
       fail-fast: false
     container:
-      image: cubejs/rust-cross:${{ matrix.target }}-30052023
+      image: cubejs/rust-cross:${{ matrix.target }}-02042024
 
     steps:
       - name: Checkout
@@ -232,7 +224,7 @@ jobs:
     strategy:
       matrix:
         # We do not need to test under all versions, we do it under linux
-        node-version: [16.x]
+        node-version: [18.x]
         os-version: ["macos-11"]
         target: ["x86_64-apple-darwin", "aarch64-apple-darwin"]
         include:
@@ -324,7 +316,7 @@ jobs:
     strategy:
       matrix:
         # We do not need to test under all versions, we do it under linux
-        node-version: [16.x]
+        node-version: [18.x]
         os-version: [windows-2019]
         python-version: ["fallback"]
       fail-fast: false
