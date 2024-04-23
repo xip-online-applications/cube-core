@@ -6,10 +6,7 @@ use crate::{
         injection::{DIService, Injector},
         processing_loop::ProcessingLoop,
     },
-    sql::{
-        MySqlServer, PostgresServer, ServerManager, SessionManager, SqlAuthDefaultImpl,
-        SqlAuthService,
-    },
+    sql::{PostgresServer, ServerManager, SessionManager, SqlAuthDefaultImpl, SqlAuthService},
     transport::{HttpTransport, TransportService},
     CubeError,
 };
@@ -59,17 +56,6 @@ impl CubeServices {
     pub async fn spawn_processing_loops(&self) -> Result<Vec<LoopHandle>, CubeError> {
         let mut futures = Vec::new();
 
-        if self.injector.has_service_typed::<MySqlServer>().await {
-            let mysql_server = self.injector.get_service_typed::<MySqlServer>().await;
-            futures.push(tokio::spawn(async move {
-                if let Err(e) = mysql_server.processing_loop().await {
-                    error!("{}", e.to_string());
-                };
-
-                Ok(())
-            }));
-        }
-
         if self.injector.has_service_typed::<PostgresServer>().await {
             let mysql_server = self.injector.get_service_typed::<PostgresServer>().await;
             futures.push(tokio::spawn(async move {
@@ -85,14 +71,6 @@ impl CubeServices {
     }
 
     pub async fn stop_processing_loops(&self) -> Result<(), CubeError> {
-        if self.injector.has_service_typed::<MySqlServer>().await {
-            self.injector
-                .get_service_typed::<MySqlServer>()
-                .await
-                .stop_processing()
-                .await?;
-        }
-
         if self.injector.has_service_typed::<PostgresServer>().await {
             self.injector
                 .get_service_typed::<PostgresServer>()
@@ -133,6 +111,10 @@ pub trait ConfigObj: DIService + Debug {
     fn enable_rewrite_cache(&self) -> bool;
 
     fn push_down_pull_up_split(&self) -> bool;
+
+    fn stream_mode(&self) -> bool;
+
+    fn non_streaming_query_max_row_limit(&self) -> i32;
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +131,8 @@ pub struct ConfigObjImpl {
     pub enable_parameterized_rewrite_cache: bool,
     pub enable_rewrite_cache: bool,
     pub push_down_pull_up_split: bool,
+    pub stream_mode: bool,
+    pub non_streaming_query_max_row_limit: i32,
 }
 
 impl ConfigObjImpl {
@@ -182,6 +166,8 @@ impl ConfigObjImpl {
             enable_rewrite_cache: env_optparse("CUBESQL_REWRITE_CACHE").unwrap_or(sql_push_down),
             push_down_pull_up_split: env_optparse("CUBESQL_PUSH_DOWN_PULL_UP_SPLIT")
                 .unwrap_or(sql_push_down),
+            stream_mode: env_parse("CUBESQL_STREAM_MODE", false),
+            non_streaming_query_max_row_limit: env_parse("CUBEJS_DB_QUERY_LIMIT", 50000),
         }
     }
 }
@@ -232,6 +218,14 @@ impl ConfigObj for ConfigObjImpl {
     fn push_down_pull_up_split(&self) -> bool {
         self.push_down_pull_up_split
     }
+
+    fn stream_mode(&self) -> bool {
+        self.stream_mode
+    }
+
+    fn non_streaming_query_max_row_limit(&self) -> i32 {
+        self.non_streaming_query_max_row_limit
+    }
 }
 
 lazy_static! {
@@ -247,7 +241,7 @@ impl Config {
         }
     }
 
-    pub fn test(_name: &str) -> Config {
+    pub fn test() -> Config {
         let query_timeout = 15;
         let timezone = Some("UTC".to_string());
         Config {
@@ -265,6 +259,8 @@ impl Config {
                 enable_parameterized_rewrite_cache: false,
                 enable_rewrite_cache: false,
                 push_down_pull_up_split: true,
+                stream_mode: false,
+                non_streaming_query_max_row_limit: 50000,
             }),
         }
     }
@@ -334,18 +330,6 @@ impl Config {
                 Arc::new(SqlAuthDefaultImpl)
             })
             .await;
-
-        if self.config_obj.bind_address().is_some() {
-            self.injector
-                .register_typed::<MySqlServer, _, _, _>(async move |i| {
-                    let config = i.get_service_typed::<dyn ConfigObj>().await;
-                    MySqlServer::new(
-                        config.bind_address().as_ref().unwrap().to_string(),
-                        i.get_service_typed().await,
-                    )
-                })
-                .await;
-        }
 
         if self.config_obj.postgres_bind_address().is_some() {
             self.injector
