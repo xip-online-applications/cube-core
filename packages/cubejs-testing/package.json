@@ -100,7 +100,7 @@
     "dedent": "^0.7.0",
     "fs-extra": "^8.1.0",
     "http-proxy": "^1.18.1",
-    "node-fetch": "^2.6.1",
+    "node-fetch": "^3.3.2",
     "ramda": "^0.27.2",
     "testcontainers": "^10.10.4",
     "yargs": "^17.3.1"
@@ -122,7 +122,7 @@
     "eslint-plugin-cypress": "^2.12.1",
     "globby": "^11.0.4",
     "jest": "^27",
-    "jsonwebtoken": "^8.5.1",
+    "jsonwebtoken": "^9.0.2",
     "jwt-decode": "^3.1.2",
     "pg": "^8.7.3",
     "typescript": "~5.2.2",
