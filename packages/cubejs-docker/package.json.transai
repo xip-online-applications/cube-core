@@ -1,12 +1,12 @@
 {
   "name": "@cubejs-backend/docker",
-  "version": "0.31.20",
+  "version": "1.6.11",
   "description": "Cube.js In Docker (virtual package)",
   "author": "Cube Dev, Inc.",
   "license": "Apache-2.0",
   "private": true,
   "engines": {
-    "node": "^14.0.0 || ^16.0.0 || >=17.0.0"
+    "node": ">=18.0.0"
   },
   "scripts": {
       "link:dev": "yarn link @cubejs-backend/shared @cubejs-backend/server @cubejs-backend/server-core @cubejs-backend/api-gateway @cubejs-backend/schema-compiler @cubejs-backend/query-orchestrator @cubejs-backend/postgres-driver @cubejs-backend/event-emitter",
@@ -16,11 +16,7 @@
     "@cubejs-backend/postgres-driver": "file:/cube-build/packages/cubejs-postgres-driver",
     "@cubejs-backend/server": "file:/cube-build/packages/cubejs-server",
     "cubejs-cli": "file:/cube-build/packages/cubejs-cli",
-    "typescript": "~4.1.5",
-    "@typescript-eslint/eslint-plugin": "^4.17.0",
-    "core-js": "^3.34.0",
-    "lerna": "^4.0.0",
-    "redis": "^4.6.14"
+    "typescript": "~5.2.2"
   },
   "resolutions": {
     "colors": "1.4.0"

@@ -8,16 +8,20 @@ ENV CI=0
 
 RUN DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
+    # python3 package is necessary to install `python3` executable for node-gyp
     && apt-get install -y --no-install-recommends libssl3 curl \
-       cmake python3.11 libpython3.11-dev gcc g++ make cmake openjdk-17-jdk-headless \
+       cmake python3 python3.11 libpython3.11-dev gcc g++ make cmake openjdk-17-jdk-headless \
     && rm -rf /var/lib/apt/lists/*
 
-ENV CUBESTORE_SKIP_POST_INSTALL=true
-ENV NODE_ENV development
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:$PATH
 
-RUN yarn policies set-version v1.22.19
-# Yarn v1 uses aggressive timeouts with summing time spending on fs, https://github.com/yarnpkg/yarn/issues/4890
-RUN yarn config set network-timeout 120000 -g
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- --profile minimal --default-toolchain nightly-2022-03-08 -y
+
+ENV CUBESTORE_SKIP_POST_INSTALL=true
+ENV NODE_ENV=development
 
 WORKDIR /cubejs
 
@@ -79,7 +83,7 @@ COPY packages/cubejs-event-emitter/ packages/cubejs-event-emitter/
 #COPY packages/cubejs-client-vue3/ packages/cubejs-client-vue3/
 #COPY packages/cubejs-client-ngx/ packages/cubejs-client-ngx/
 #COPY packages/cubejs-client-ws-transport/ packages/cubejs-client-ws-transport/
-#COPY packages/cubejs-playground/ packages/cubejs-playground/
+COPY packages/cubejs-playground/ packages/cubejs-playground/
 
 RUN yarn install
 RUN yarn lerna run build
@@ -95,8 +99,9 @@ ENV CUBEJS_DOCKER_IMAGE_TAG=latest
 
 RUN DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
+    # python3 package is necessary to install `python3` executable for node-gyp
     && apt-get install -y --no-install-recommends libssl3 curl \
-       cmake python3.11 libpython3.11-dev gcc g++ make cmake openjdk-17-jdk-headless \
+       cmake python3 python3.11 libpython3.11-dev gcc g++ make cmake openjdk-17-jdk-headless \
     && rm -rf /var/lib/apt/lists/*
 
 ENV TERM rxvt-unicode
