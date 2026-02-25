@@ -18377,4 +18377,80 @@ LIMIT {{ limit }}{% endif %}"#.to_string(),
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_lag_lead_fn_sql_push_down() {
+        if !Rewriter::sql_push_down_enabled() {
+            return;
+        }
+        init_testing_logger();
+
+        let query_plan = convert_select_to_query_plan(
+            r#"
+            SELECT
+                order_date,
+                customer_gender,
+                LAG(customer_gender, 1) OVER (ORDER BY order_date) AS lag,
+                LEAD(customer_gender, 1) OVER (ORDER BY order_date) AS lead
+            FROM KibanaSampleDataEcommerce
+            WHERE LOWER(customer_gender) = 'test'
+            GROUP BY 1, 2
+            "#
+            .to_string(),
+            DatabaseProtocol::PostgreSQL,
+        )
+        .await;
+
+        let logical_plan = query_plan.as_logical_plan();
+        let sql = logical_plan.find_cube_scan_wrapped_sql().wrapped_sql.sql;
+        assert!(sql.contains("LAG("));
+        assert!(sql.contains("LEAD("));
+        assert!(sql.contains(" OVER (ORDER BY "));
+
+        let physical_plan = query_plan.as_physical_plan().await.unwrap();
+        println!(
+            "Physical plan: {}",
+            displayable(physical_plan.as_ref()).indent()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_to_timestamp_date_only() {
+        if !Rewriter::sql_push_down_enabled() {
+            return;
+        }
+        init_testing_logger();
+
+        let logical_plan = convert_select_to_query_plan(
+            r#"
+            SELECT customer_gender
+            FROM KibanaSampleDataEcommerce
+            WHERE order_date >= TO_TIMESTAMP('2025-01-01', 'YYYY-MM-DD')
+            GROUP BY 1
+            "#
+            .to_string(),
+            DatabaseProtocol::PostgreSQL,
+        )
+        .await
+        .as_logical_plan();
+
+        assert_eq!(
+            logical_plan.find_cube_scan().request,
+            V1LoadRequestQuery {
+                measures: Some(vec![]),
+                dimensions: Some(vec![
+                    "KibanaSampleDataEcommerce.customer_gender".to_string(),
+                ]),
+                segments: Some(vec![]),
+                order: Some(vec![]),
+                filters: Some(vec![V1LoadRequestQueryFilterItem {
+                    member: Some("KibanaSampleDataEcommerce.order_date".to_string()),
+                    operator: Some("afterOrOnDate".to_string()),
+                    values: Some(vec!["2025-01-01T00:00:00.000Z".to_string()]),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }
+        )
+    }
 }
