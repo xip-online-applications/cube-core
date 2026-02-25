@@ -112,7 +112,7 @@ export class CubeStoreDriver extends BaseDriver implements DriverInterface {
       withEntries.push(`delimiter = '${options.delimiter}'`);
     }
     if (options.disableQuoting) {
-      withEntries.push(`disable_quoting = true`);
+      withEntries.push('disable_quoting = true');
     }
     if (options.buildRangeEnd) {
       withEntries.push(`build_range_end = '${options.buildRangeEnd}'`);
@@ -157,7 +157,7 @@ export class CubeStoreDriver extends BaseDriver implements DriverInterface {
     }
 
     return this.query(sql, params, queryTracingObj).catch(e => {
-      e.message = `Error during create table: ${sql}: ${e.message}`;
+      e.message = `Error during create table: ${sql}: ${e.message}. Options: ${options ? JSON.stringify(options) : 'none'}`;
       throw e;
     });
   }
