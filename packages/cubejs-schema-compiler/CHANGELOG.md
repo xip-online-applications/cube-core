@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.6.15](https://github.com/cube-js/cube/compare/v1.6.14...v1.6.15) (2026-02-23)
+
+### Bug Fixes
+
+- **mssql-driver:** Use UTC timestamps in responses ([#10411](https://github.com/cube-js/cube/issues/10411)) ([4cb9f78](https://github.com/cube-js/cube/commit/4cb9f782e0ec40f055f80d48c6049b9dcc500dc6)), closes [#9488](https://github.com/cube-js/cube/issues/9488)
+- **tesseract:** Incorrect matching of calculated measures in pre-aggregations ([#10417](https://github.com/cube-js/cube/issues/10417)) ([8959b0d](https://github.com/cube-js/cube/commit/8959b0d9df6a8423ad75950f5611d2a4dfed781f))
+
+## [1.6.14](https://github.com/cube-js/cube/compare/v1.6.13...v1.6.14) (2026-02-18)
+
+### Features
+
+- **cubesql:** Support SQL pushdown for `LAG`/`LEAD` functions ([#10407](https://github.com/cube-js/cube/issues/10407)) ([c968656](https://github.com/cube-js/cube/commit/c968656970a90e640548e6b0165e5f1327cf150a))
+
+## [1.6.13](https://github.com/cube-js/cube/compare/v1.6.12...v1.6.13) (2026-02-17)
+
+### Features
+
+- **schema-compiler:** Pass jinjaUsed flag to native transpileYaml ([#10402](https://github.com/cube-js/cube/issues/10402)) ([884811a](https://github.com/cube-js/cube/commit/884811a85ff940834722876b1570fa861f387ed5))
+- **schema-compiler:** Yaml - duplicate check for view/cube names ([#10400](https://github.com/cube-js/cube/issues/10400)) ([11a140f](https://github.com/cube-js/cube/commit/11a140f4183b8a44a8800549da22b588ecd5ac02))
+- **schema-compiler:** Yaml - validate duplicates ([#10399](https://github.com/cube-js/cube/issues/10399)) ([d711612](https://github.com/cube-js/cube/commit/d71161210cb24b4b0039c343a3f67d8fe4197f3a))
+
+### Performance Improvements
+
+- **schema-compiler:** Remove JSON.stringify in cache key hashing ([#10404](https://github.com/cube-js/cube/issues/10404)) ([6aae245](https://github.com/cube-js/cube/commit/6aae245585fc8a654a264e34eaf7a47f860d1533))
+
+## [1.6.12](https://github.com/cube-js/cube/compare/v1.6.11...v1.6.12) (2026-02-16)
+
+**Note:** Version bump only for package @cubejs-backend/schema-compiler
+
 ## [1.6.11](https://github.com/cube-js/cube/compare/v1.6.10...v1.6.11) (2026-02-12)
 
 **Note:** Version bump only for package @cubejs-backend/schema-compiler
