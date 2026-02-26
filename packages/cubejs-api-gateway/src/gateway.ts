@@ -677,7 +677,16 @@ class ApiGateway {
         return;
       }
       const cubesConfig = includeCompilerId ? metaConfig.cubes : metaConfig;
-      const cubes = this.filterVisibleItemsInMeta(context, cubesConfig).map(cube => cube.config);
+      const metaConfigExtended = await compilerApi.metaConfigExtended(context, {
+        requestId: context.requestId,
+      });
+      const cubeDefinitions = metaConfigExtended?.cubeDefinitions || {};
+      const cubes = this.filterVisibleItemsInMeta(context, cubesConfig)
+        .map(cube => cube.config)
+        .map((cube) => ({
+          ...cube,
+          preAggregations: transformPreAggregations(cubeDefinitions[cube.name]?.preAggregations),
+        }));
       const response: { cubes: any[], compilerId?: string } = { cubes };
       if (includeCompilerId) {
         response.compilerId = metaConfig.compilerId;

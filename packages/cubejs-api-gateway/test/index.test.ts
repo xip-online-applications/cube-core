@@ -686,6 +686,12 @@ describe('API Gateway', () => {
     expect(res.body.cubes[0]?.dimensions.find(dimension => dimension.name === 'Foo.id').description).toBe('id dimension from compilerApi mock');
     expect(res.body.cubes[0]?.measures.find(measure => measure.name === 'Foo.bar').description).toBe('measure from compilerApi mock');
     expect(res.body.cubes[0]?.segments.find(segment => segment.name === 'Foo.quux').description).toBe('segment from compilerApi mock');
+    expect(res.body.cubes[0]?.preAggregations).toEqual([
+      {
+        type: 'rollup',
+        name: 'main',
+      }
+    ]);
   });
 
   test('meta endpoint extended to get schema information with additional data', async () => {

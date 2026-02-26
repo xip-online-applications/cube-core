@@ -169,6 +169,11 @@ export const compilerApi = jest.fn().mockImplementation(async () => ({
         sql: () => 'SELECT * FROM Foo',
         measures: {},
         dimension: {},
+        preAggregations: {
+          main: {
+            type: 'rollup',
+          }
+        },
       }
     };
 
