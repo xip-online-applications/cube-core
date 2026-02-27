@@ -30,6 +30,7 @@
     "use:transai": "yarn link @cubejs-backend/shared && yarn link @cubejs-backend/cloud && yarn link @cubejs-backend/native && yarn link @cubejs-backend/server && yarn link @cubejs-backend/api-gateway && yarn link @cubejs-backend/schema-compiler && yarn link @cubejs-backend/query-orchestrator && yarn link @cubejs-backend/postgres-driver && yarn link @cubejs-backend/cubestore-driver && yarn link @cubejs-backend/event-emitter && yarn link"
   },
   "dependencies": {
+    "@cubejs-backend/event-emitter": "file:../cubejs-event-emitter",
     "@cubejs-backend/api-gateway": "1.6.17",
     "@cubejs-backend/base-driver": "1.6.17",
     "@cubejs-backend/cloud": "1.6.17",
