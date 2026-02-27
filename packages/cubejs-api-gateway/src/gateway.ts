@@ -505,6 +505,18 @@ class ApiGateway {
       })
     );
 
+    app.get(
+      `${this.basePath}/v1/pre-aggregations`,
+      userMiddlewares,
+      userAsyncHandler(this.preAggregationsGet.bind(this)),
+    );
+
+    app.post(
+      `${this.basePath}/v1/pre-aggregations/partitions`,
+      userMiddlewares,
+      userAsyncHandler(this.preAggregationsPartitions.bind(this)),
+    );
+
     app.post(
       `${this.basePath}/v1/pre-aggregations/jobs`,
       userMiddlewares,
@@ -762,6 +774,53 @@ class ApiGateway {
     } catch (e: any) {
       this.handleError({
         e, context, res, requestStarted
+      });
+    }
+  }
+
+  private async preAggregationsGet(req: Request, res: ExpressResponse) {
+    const response = this.resToResultFn(res);
+    const requestStarted = new Date();
+    const context = <RequestContext>req.context;
+
+    try {
+      await this.assertApiScope('jobs', context.securityContext);
+
+      await this.getPreAggregations({
+        cacheOnly: !!req.query.cacheOnly,
+        metaOnly: !!req.query.metaOnly,
+        context,
+        res: response,
+      });
+    } catch (e: any) {
+      this.handleError({
+        e,
+        context,
+        res: response,
+        requestStarted,
+      });
+    }
+  }
+
+  private async preAggregationsPartitions(req: Request, res: ExpressResponse) {
+    const response = this.resToResultFn(res);
+    const requestStarted = new Date();
+    const context = <RequestContext>req.context;
+
+    try {
+      await this.assertApiScope('jobs', context.securityContext);
+
+      await this.getPreAggregationPartitions({
+        query: req.body.query,
+        context,
+        res: response,
+      });
+    } catch (e: any) {
+      this.handleError({
+        e,
+        context,
+        res: response,
+        requestStarted,
       });
     }
   }

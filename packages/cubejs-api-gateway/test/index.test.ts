@@ -1113,6 +1113,87 @@ describe('API Gateway', () => {
       expect(res.status).toEqual(400);
       expect(res.body.error.includes('Cannot parse selector date range')).toBeTruthy();
     });
+
+    test('GET /v1/pre-aggregations no auth', async () => {
+      const { app } = await appPrepareFactory(['graphql', 'data', 'meta', 'jobs']);
+
+      const res = await request(app)
+        .get('/test/v1/pre-aggregations')
+        .set('Content-type', 'application/json');
+
+      expect(res.status).toEqual(403);
+    });
+
+    test('GET /v1/pre-aggregations no jobs scope', async () => {
+      const { app, tokenUser } = await appPrepareFactory(['graphql', 'data', 'meta']);
+
+      const res = await request(app)
+        .get('/test/v1/pre-aggregations')
+        .set('Content-type', 'application/json')
+        .set('Authorization', `Bearer ${tokenUser}`);
+
+      expect(res.status).toEqual(403);
+    });
+
+    test('GET /v1/pre-aggregations success', async () => {
+      const { app, tokenUser } = await appPrepareFactory(['graphql', 'data', 'meta', 'jobs']);
+
+      const res = await request(app)
+        .get('/test/v1/pre-aggregations')
+        .set('Content-type', 'application/json')
+        .set('Authorization', `Bearer ${tokenUser}`);
+
+      expect(res.status).toEqual(200);
+      expect(res.body).toMatchObject({ preAggregations: preAggregationsResultFactory() });
+    });
+
+    test('GET /v1/pre-aggregations/partitions no auth', async () => {
+      const { app } = await appPrepareFactory(['graphql', 'data', 'meta', 'jobs']);
+
+      const query = JSON.stringify({
+        timezones: ['UTC'],
+        preAggregations: [{ id: 'cube.preAggregationName' }]
+      });
+
+      const res = await request(app)
+        .get(`/test/v1/pre-aggregations/partitions?query=${encodeURIComponent(query)}`)
+        .set('Content-type', 'application/json');
+
+      expect(res.status).toEqual(403);
+    });
+
+    test('GET /v1/pre-aggregations/partitions no jobs scope', async () => {
+      const { app, tokenUser } = await appPrepareFactory(['graphql', 'data', 'meta']);
+
+      const query = JSON.stringify({
+        timezones: ['UTC'],
+        preAggregations: [{ id: 'cube.preAggregationName' }]
+      });
+
+      const res = await request(app)
+        .get(`/test/v1/pre-aggregations/partitions?query=${encodeURIComponent(query)}`)
+        .set('Content-type', 'application/json')
+        .set('Authorization', `Bearer ${tokenUser}`);
+
+      expect(res.status).toEqual(403);
+    });
+
+    test('GET /v1/pre-aggregations/partitions success', async () => {
+      const { app, tokenUser } = await appPrepareFactory(['graphql', 'data', 'meta', 'jobs']);
+
+      const query = JSON.stringify({
+        timezones: ['UTC'],
+        preAggregations: [{ id: 'cube.preAggregationName' }]
+      });
+
+      const res = await request(app)
+        .get(`/test/v1/pre-aggregations/partitions?query=${encodeURIComponent(query)}`)
+        .set('Content-type', 'application/json')
+        .set('Authorization', `Bearer ${tokenUser}`);
+
+      expect(res.status).toEqual(200);
+      expect(res.body).toMatchObject({ preAggregationPartitions: preAggregationPartitionsResultFactory() });
+    });
   });
 
   describe('healtchecks', () => {
