@@ -207,7 +207,9 @@ export class SubscriptionServer {
         }
       }
 
-      const method = message.method.replace(/[^a-z]+(.)/g, (_m, chr) => chr.toUpperCase());
+      const method = message.method === 'meta'
+        ? 'metaExtended'
+        : message.method.replace(/[^a-z]+(.)/g, (_m, chr) => chr.toUpperCase());
       await this.apiGateway[method]({
         ...collectedParams,
         connectionId,
