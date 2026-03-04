@@ -707,7 +707,7 @@ export class PreAggregations {
     /**
      * Returns an array of 2-element arrays with dimension and granularity.
      */
-    const expandTimeDimension = (timeDimension: string[]): string[][] => {
+    const expandTimeDimension = (timeDimension: [string, string | null]): string[][] => {
       const [dimension, resolvedGranularity] = timeDimension;
       if (!resolvedGranularity) {
         return [[dimension, '*']]; // Any granularity should fit
@@ -717,18 +717,51 @@ export class PreAggregations {
         .map((newGranularity) => [dimension, newGranularity]);
     };
 
+    const virtualMinuteGranularities = new Set(['minutes_5', 'minutes_15', 'minutes_30']);
+
+    const withMinuteBucketsAsIs = (
+      timeDimensionsWithRollupGranularity: [string, string | null][],
+      timeDimensionsAsIs: [string, string | null][]
+    ): [string, string | null][] => {
+      const asIsByDimension = new Map<string, string | null>(timeDimensionsAsIs);
+
+      return timeDimensionsWithRollupGranularity.map(([dimension, granularity]) => {
+        const granularityAsIs = asIsByDimension.get(dimension);
+
+        if (
+          granularity === 'minute' &&
+          granularityAsIs &&
+          virtualMinuteGranularities.has(granularityAsIs)
+        ) {
+          return [dimension, granularityAsIs];
+        }
+
+        return [dimension, granularity];
+      });
+    };
+
     const canUsePreAggregationLeafMeasureAdditive: CanUsePreAggregationFn = (references): CanUsePreAggregationResult => {
       /**
        * Array of 2-element arrays with dimension and granularity.
        * @type {Array<Array<string>>}
        */
+      const strictQueryTimeDimensions = withMinuteBucketsAsIs(
+        transformedQuery.sortedTimeDimensions,
+        transformedQuery.timeDimensions,
+      );
+
       const queryTimeDimensionsList = references.allowNonStrictDateRangeMatch
         ? transformedQuery.timeDimensions.map(expandTimeDimension)
-        : transformedQuery.sortedTimeDimensions.map(expandTimeDimension);
+        : strictQueryTimeDimensions.map(expandTimeDimension);
+
+      const strictOwnedQueryTimeDimensions = withMinuteBucketsAsIs(
+        transformedQuery.ownedTimeDimensionsWithRollupGranularity,
+        transformedQuery.ownedTimeDimensionsAsIs,
+      );
 
       const ownedQueryTimeDimensionsList = references.allowNonStrictDateRangeMatch
         ? transformedQuery.ownedTimeDimensionsAsIs.map(expandTimeDimension)
-        : transformedQuery.ownedTimeDimensionsWithRollupGranularity.map(expandTimeDimension);
+        : strictOwnedQueryTimeDimensions.map(expandTimeDimension);
 
       // Even if there are no multiplied measures in the query (because no multiplier dimensions are requested)
       // but the same measures are multiplied in the pre-aggregation, we can't use pre-aggregation

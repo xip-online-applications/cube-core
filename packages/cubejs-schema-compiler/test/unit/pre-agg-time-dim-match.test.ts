@@ -203,6 +203,14 @@ describe('Pre Aggregation by filter match tests', () => {
     true, ['count'], 'minutes_30', 'hour'
   ));
 
+  it('1 count measure, minutes_5, minutes_15', () => testPreAggregationMatch(
+    true, ['count'], 'minutes_5', 'minutes_15'
+  ));
+
+  it('1 count measure, minutes_5, minutes_30', () => testPreAggregationMatch(
+    true, ['count'], 'minutes_5', 'minutes_30'
+  ));
+
   it('1 count measure, minutes_5, minute', () => testPreAggregationMatch(
     false, ['count'], 'minutes_5', 'minute'
   ));
