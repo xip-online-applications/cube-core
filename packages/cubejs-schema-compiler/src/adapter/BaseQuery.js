@@ -275,6 +275,7 @@ export class BaseQuery {
       preAggregationQuery: this.options.preAggregationQuery,
       disableExternalPreAggregations: this.options.disableExternalPreAggregations,
       useOriginalSqlPreAggregationsInPreAggregation: this.options.useOriginalSqlPreAggregationsInPreAggregation,
+      useRollupPreAggregationsInPreAggregation: this.options.useRollupPreAggregationsInPreAggregation,
       cubeLatticeCache: this.options.cubeLatticeCache, // TODO too heavy for key
       historyQueries: this.options.historyQueries, // TODO too heavy for key
       ungrouped: this.options.ungrouped,
@@ -2609,9 +2610,16 @@ export class BaseQuery {
    * @param {string} cube
    */
   cubeSql(cube) {
-    const foundPreAggregation = this.preAggregations.findPreAggregationToUseForCube(cube);
+    const foundPreAggregation = this.preAggregations.findPreAggregationToUseForCube(
+      cube,
+      this.options.useRollupPreAggregationsInPreAggregation
+    );
     if (foundPreAggregation &&
-      (!this.options.preAggregationQuery || this.options.useOriginalSqlPreAggregationsInPreAggregation) &&
+      (
+        !this.options.preAggregationQuery ||
+        this.options.useOriginalSqlPreAggregationsInPreAggregation ||
+        this.options.useRollupPreAggregationsInPreAggregation
+      ) &&
       !this.safeEvaluateSymbolContext().preAggregationQuery
     ) {
       if (this.safeEvaluateSymbolContext().collectOriginalSqlPreAggregations) {

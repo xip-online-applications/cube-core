@@ -590,6 +590,85 @@ describe('pre-aggregations', () => {
     expect(preAggregationsDescription[0].preAggregationId).toEqual('orders.orders_external');
   });
 
+  it('rollup build can chain through rollup dependencies', async () => {
+    const { compiler, cubeEvaluator, joinGraph } = prepareYamlCompiler(
+      createSchemaYaml({
+        cubes: [
+          {
+            name: 'orders',
+            sql_table: 'orders',
+            measures: [{
+              name: 'count',
+              type: 'count',
+            }],
+            dimensions: [
+              {
+                name: 'created_at',
+                sql: 'created_at',
+                type: 'time',
+              },
+              {
+                name: 'status',
+                sql: 'status',
+                type: 'string',
+              }
+            ],
+            preAggregations: [
+              {
+                name: 'orders_by_minute',
+                measures: ['count'],
+                dimensions: ['status'],
+                timeDimension: 'CUBE.created_at',
+                granularity: 'minute',
+              },
+              {
+                name: 'orders_by_15_minute',
+                measures: ['count'],
+                dimensions: ['status'],
+                timeDimension: 'CUBE.created_at',
+                granularity: 'minutes_15',
+                rollups: ['orders_by_minute'],
+              },
+              {
+                name: 'orders_by_hour',
+                measures: ['count'],
+                dimensions: ['status'],
+                timeDimension: 'CUBE.created_at',
+                granularity: 'hour',
+                rollups: ['orders_by_15_minute'],
+              },
+            ]
+          }
+        ]
+      })
+    );
+
+    await compiler.compile();
+
+    const query = new PostgresQuery({ joinGraph, cubeEvaluator, compiler }, {
+      measures: ['orders.count'],
+      dimensions: ['orders.status'],
+      timeDimensions: [{
+        dimension: 'orders.created_at',
+        granularity: 'hour',
+        dateRange: ['2023-01-01', '2023-01-10']
+      }],
+      preAggregationId: 'orders.orders_by_hour',
+      timezone: 'UTC',
+    });
+
+    const preAggregationsDescription: any = query.preAggregations?.preAggregationsDescription();
+    expect(preAggregationsDescription.map((d) => d.preAggregationId)).toEqual([
+      'orders.orders_by_minute',
+      'orders.orders_by_15_minute',
+      'orders.orders_by_hour',
+    ]);
+
+    const byId = Object.fromEntries(preAggregationsDescription.map((d) => [d.preAggregationId, d]));
+    expect(byId['orders.orders_by_15_minute'].loadSql[0]).toContain(byId['orders.orders_by_minute'].tableName);
+    expect(byId['orders.orders_by_hour'].loadSql[0]).toContain(byId['orders.orders_by_15_minute'].tableName);
+  });
+
   describe('rollup with multiplied measure', () => {
     let compiler;
     let cubeEvaluator;

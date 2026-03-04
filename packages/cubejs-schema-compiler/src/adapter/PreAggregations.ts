@@ -135,6 +135,9 @@ export class PreAggregations {
 
   private preAggregationsDescriptionLocal(): FullPreAggregationDescription[] {
     const isInPreAggregationQuery = this.query.options.preAggregationQuery;
+    const hasRollupDependenciesInPreAggregation =
+      Array.isArray(this.query.options.useRollupPreAggregationsInPreAggregation) &&
+      this.query.options.useRollupPreAggregationsInPreAggregation.length > 0;
     if (!isInPreAggregationQuery) {
       const preAggregationForQuery = this.findPreAggregationForQuery();
       if (preAggregationForQuery) {
@@ -143,7 +146,11 @@ export class PreAggregations {
     }
     if (
       !isInPreAggregationQuery ||
-      isInPreAggregationQuery && this.query.options.useOriginalSqlPreAggregationsInPreAggregation) {
+      isInPreAggregationQuery &&
+      (
+        this.query.options.useOriginalSqlPreAggregationsInPreAggregation ||
+        hasRollupDependenciesInPreAggregation
+      )) {
       return R.pipe(
         R.map((cube: string) => {
           const { preAggregations } = this.collectOriginalSqlPreAggregations(() => this.query.cubeSql(cube));
@@ -395,14 +402,45 @@ export class PreAggregations {
     );
   }
 
-  public findPreAggregationToUseForCube(cube: string): PreAggregationForCube | null {
+  public findPreAggregationToUseForCube(cube: string, rollupPreAggregationsInPreAggregation: string[] = []): PreAggregationForCube | null {
     const preAggregates = this.query.cubeEvaluator.preAggregationsForCube(cube);
-    const originalSqlPreAggregations = R.pipe(
+    const rollupDependencyIds = new Set(
+      rollupPreAggregationsInPreAggregation.map((preAggregationPath) => {
+        const [preAggregationCube, preAggregationName] = this.query.cubeEvaluator.parsePath('preAggregations', preAggregationPath);
+        return `${preAggregationCube}.${preAggregationName}`;
+      })
+    );
+
+    const preAggregationsToUse = R.pipe(
       R.toPairs,
-      R.filter(([, a]) => a.type === 'originalSql')
+      R.filter(([preAggregationName, preAggregation]) => preAggregation.type === 'originalSql' || (
+        preAggregation.type === 'rollup' && rollupDependencyIds.has(`${cube}.${preAggregationName}`)
+      ))
     )(preAggregates);
-    if (originalSqlPreAggregations.length) {
-      const [preAggregationName, preAggregation] = originalSqlPreAggregations[0];
+
+    const referencedRollupsInCurrentCube = preAggregationsToUse
+      .filter(([, preAggregation]) => preAggregation.type === 'rollup');
+
+    if (referencedRollupsInCurrentCube.length > 1) {
+      throw new UserError(`Only one rollup dependency per cube is supported in pre-aggregation build. Found: ${referencedRollupsInCurrentCube.map(([preAggregationName]) => `${cube}.${preAggregationName}`).join(', ')}`);
+    }
+
+    const referencedRollupForCurrentCube = referencedRollupsInCurrentCube[0];
+    if (referencedRollupForCurrentCube) {
+      const [preAggregationName, preAggregation] = referencedRollupForCurrentCube;
+      return {
+        preAggregationName,
+        preAggregation,
+        cube,
+        references: this.evaluateAllReferences(cube, preAggregation, preAggregationName)
+      };
+    }
+
+    const originalSqlPreAggregationForCurrentCube = preAggregationsToUse
+      .find(([, preAggregation]) => preAggregation.type === 'originalSql');
+
+    if (originalSqlPreAggregationForCurrentCube) {
+      const [preAggregationName, preAggregation] = originalSqlPreAggregationForCurrentCube;
       return {
         preAggregationName,
         preAggregation,
@@ -1289,6 +1327,8 @@ export class PreAggregations {
       preAggregationQuery: true,
       useOriginalSqlPreAggregationsInPreAggregation:
         aggregation.useOriginalSqlPreAggregations,
+      useRollupPreAggregationsInPreAggregation:
+        references.rollups,
       ungrouped:
         cubeQuery.preAggregationAllowUngroupingWithPrimaryKey(
           cube,
