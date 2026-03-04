@@ -19,11 +19,11 @@ import type { LocalSubscriptionStore } from './local-subscription-store';
 const ensureArray = (value: any) => (Array.isArray(value) ? value : [value]);
 
 const methodParams: Record<string, string[]> = Object.freeze({
-  load: ['query', 'queryType'],
+  load: ['query', 'queryType', 'cache'],
   sql: ['query'],
   'dry-run': ['query'],
   meta: [],
-  subscribe: ['query', 'queryType'],
+  subscribe: ['query', 'queryType', 'cache'],
   unsubscribe: [],
 });
 
@@ -210,6 +210,10 @@ export class SubscriptionServer {
       const method = message.method === 'meta'
         ? 'metaExtended'
         : message.method.replace(/[^a-z]+(.)/g, (_m, chr) => chr.toUpperCase());
+      if (collectedParams.cache !== undefined) {
+        collectedParams.cacheMode = collectedParams.cache;
+        delete collectedParams.cache;
+      }
       await this.apiGateway[method]({
         ...collectedParams,
         connectionId,
