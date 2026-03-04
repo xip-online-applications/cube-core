@@ -255,8 +255,8 @@ describe('SubscriptionServer', () => {
     });
 
     it('should forward cache param as cacheMode for load', async () => {
-      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor } = createMocks();
-      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor);
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
 
       const message = {
         method: 'load',
@@ -280,8 +280,8 @@ describe('SubscriptionServer', () => {
     });
 
     it('should forward cache param as cacheMode for subscribe', async () => {
-      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor } = createMocks();
-      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor);
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
 
       const message = {
         method: 'subscribe',
