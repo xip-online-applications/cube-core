@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ZodError } from 'zod';
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
 import { Subject } from 'rxjs';
-import { map, filter, bufferTime } from 'rxjs/operators';
+import { map, filter, bufferTime, tap } from 'rxjs/operators';
 import { UserError } from '../user-error';
 import { ExtendedRequestContext, ContextAcceptorFn } from '../interfaces';
 import { CubejsHandlerError } from '../cubejs-handler-error';
@@ -37,6 +37,7 @@ export class SubscriptionServer {
   readonly #cubeRenewSubject = new Subject<unknown>();
 
   readonly #cubeRenewedPipe = this.#cubeRenewSubject.pipe(
+    tap((val) => console.log(val)),
     map((val) => ensureArray(val)),
     // Map only the renewedCube property
     map((val) => val as Array<{ renewedCube: string | undefined }>),
@@ -273,7 +274,7 @@ export class SubscriptionServer {
       return;
     }
 
-    console.log('Renewing subs based on changed cubes', cubes, subs.length);
+    console.log(`Renewing ${subs.length} subs based on changed cubes`, cubes);
     subs.map(async subscription => {
       this.handleMessage(subscription.connectionId, subscription.message, true);
     });

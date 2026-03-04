@@ -240,7 +240,7 @@ export class ServerContainer {
       try {
         const { version, port } = await server.listen();
 
-        console.log(`🚀 Cube API server (${version}, TransAI build) is listening on ${port}`);
+        console.log(`🚀 Cube API server (${version}, TransAI build - Custom granularities) is listening on ${port}`);
       } catch (e: any) {
         console.error('Fatal error during server start: ');
         console.error(e.stack || e);
