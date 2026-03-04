@@ -41,12 +41,15 @@ import { PreAggregations } from './PreAggregations';
 const DEFAULT_PREAGGREGATIONS_SCHEMA = 'stb_pre_aggregations';
 
 const standardGranularitiesParents = {
-  year: ['year', 'quarter', 'month', 'day', 'hour', 'minute', 'second'],
-  quarter: ['quarter', 'month', 'day', 'hour', 'minute', 'second'],
-  month: ['month', 'day', 'hour', 'minute', 'second'],
-  week: ['week', 'day', 'hour', 'minute', 'second'],
-  day: ['day', 'hour', 'minute', 'second'],
-  hour: ['hour', 'minute', 'second'],
+  year: ['year', 'quarter', 'month', 'day', 'hour', 'minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second'],
+  quarter: ['quarter', 'month', 'day', 'hour', 'minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second'],
+  month: ['month', 'day', 'hour', 'minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second'],
+  week: ['week', 'day', 'hour', 'minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second'],
+  day: ['day', 'hour', 'minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second'],
+  hour: ['hour', 'minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second'],
+  minutes_30: ['minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second'],
+  minutes_15: ['minutes_15', 'minutes_5', 'minute', 'second'],
+  minutes_5: ['minutes_5', 'minute', 'second'],
   minute: ['minute', 'second'],
   second: ['second']
 };

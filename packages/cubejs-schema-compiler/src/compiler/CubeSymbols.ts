@@ -1379,16 +1379,30 @@ export class CubeSymbols implements TranspilerSymbolResolver, CompilerInterface 
 
     // Calendar cubes time dimensions may define custom sql for predefined granularities,
     // so we need to check if such granularity exists in cube definition.
-    if (typeof granName === 'string' && /^(second|minute|hour|day|week|month|quarter|year)$/i.test(granName)) {
+    const predefinedGranularityIntervals: Record<string, string> = {
+      second: '1 second',
+      minute: '1 minute',
+      minutes_5: '5 minutes',
+      minutes_15: '15 minutes',
+      minutes_30: '30 minutes',
+      hour: '1 hour',
+      day: '1 day',
+      week: '1 week',
+      month: '1 month',
+      quarter: '1 quarter',
+      year: '1 year',
+    };
+
+    if (typeof granName === 'string' && predefinedGranularityIntervals[granName.toLowerCase()]) {
       const customGranularity = cube?.[dimName]?.[gr]?.[granName];
       if (customGranularity) {
         return {
           ...customGranularity,
-          interval: `1 ${granName}`, // It's still important to have interval for granularity math
+          interval: predefinedGranularityIntervals[granName.toLowerCase()], // It's still important to have interval for granularity math
         };
       }
 
-      return { interval: `1 ${granName}` };
+      return { interval: predefinedGranularityIntervals[granName.toLowerCase()] };
     }
 
     return cube?.[dimName]?.[gr]?.[granName];

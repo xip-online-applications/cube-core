@@ -190,4 +190,20 @@ describe('Pre Aggregation by filter match tests', () => {
   it('count+sum measures, day, week', () => testPreAggregationMatch(
     true, ['count', 'sum'], 'day', 'week'
   ));
+
+  it('1 count measure, minutes_5, hour', () => testPreAggregationMatch(
+    true, ['count'], 'minutes_5', 'hour'
+  ));
+
+  it('1 count measure, minutes_15, hour', () => testPreAggregationMatch(
+    true, ['count'], 'minutes_15', 'hour'
+  ));
+
+  it('1 count measure, minutes_30, hour', () => testPreAggregationMatch(
+    true, ['count'], 'minutes_30', 'hour'
+  ));
+
+  it('1 count measure, minutes_5, minute', () => testPreAggregationMatch(
+    false, ['count'], 'minutes_5', 'minute'
+  ));
 });
