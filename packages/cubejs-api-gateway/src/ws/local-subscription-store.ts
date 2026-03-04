@@ -104,7 +104,7 @@ export class LocalSubscriptionStore {
     return result;
   }
 
-  public async getSubscriptionsByCubeName(tenantId: string, cubes: Array<string>) {
+  public async getSubscriptionsByCubeName(cubes: Array<string>) {
     // TODO: Implement cube filtering by auth context
     return (await this.getAllSubscriptions()).filter(subscription => haveCommonElement(cubes, subscription.cubes));
   }
