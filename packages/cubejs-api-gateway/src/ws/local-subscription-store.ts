@@ -72,8 +72,6 @@ export class LocalSubscriptionStore {
         }
       }
 
-      console.log('connection', connection.authContext);
-
       for (const [, subscription] of connection.subscriptions) {
         result.push({ connectionId, ...subscription });
       }
@@ -94,7 +92,7 @@ export class LocalSubscriptionStore {
         }
       }
 
-      if (connection.authContext?.tenantId === tenantId) {
+      if (connection.authContext?.securityContext?.tenantId === tenantId) {
         for (const [, subscription] of connection.subscriptions) {
           result.push({ connectionId, ...subscription });
         }
@@ -104,9 +102,8 @@ export class LocalSubscriptionStore {
     return result;
   }
 
-  public async getSubscriptionsByCubeName(cubes: Array<string>) {
-    // TODO: Implement cube filtering by auth context
-    return (await this.getAllSubscriptions()).filter(subscription => haveCommonElement(cubes, subscription.cubes));
+  public getSubscriptionsByCubeName(tenantId: string, cubes: Array<string>) {
+    return this.getTenantSubscriptions(tenantId).filter(subscription => haveCommonElement(cubes, subscription.cubes));
   }
 
   public async disconnect(connectionId: string) {

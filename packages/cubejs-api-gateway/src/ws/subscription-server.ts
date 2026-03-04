@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ZodError } from 'zod';
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
 import { Subject } from 'rxjs';
-import { map, filter, bufferTime, tap } from 'rxjs/operators';
+import { map, bufferTime } from 'rxjs/operators';
 import { UserError } from '../user-error';
 import { ExtendedRequestContext, ContextAcceptorFn } from '../interfaces';
 import { CubejsHandlerError } from '../cubejs-handler-error';
@@ -17,6 +17,17 @@ import type { ApiGateway } from '../gateway';
 import type { LocalSubscriptionStore } from './local-subscription-store';
 
 const ensureArray = (value: any) => (Array.isArray(value) ? value : [value]);
+
+const combineByTenant = (values: Array<{ tenantId: string, cube: string }>): Array<{ tenantId: string, cubes: Array<string> }> => {
+  const result: Record<string, Set<string>> = {};
+  for (const { tenantId, cube } of values) {
+    if (!result[tenantId]) {
+      result[tenantId] = new Set();
+    }
+    result[tenantId].add(cube);
+  }
+  return Object.entries(result).map(([tenantId, cubes]) => ({ tenantId, cubes: Array.from(cubes) }));
+};
 
 const methodParams: Record<string, string[]> = Object.freeze({
   load: ['query', 'queryType', 'cache'],
@@ -39,17 +50,13 @@ export class SubscriptionServer {
   readonly #cubeRenewedPipe = this.#cubeRenewSubject.pipe(
     map((val) => ensureArray(val)),
     // Map only the renewedCube property
-    map((val) => val as Array<{ renewedCube: string | undefined, requestContext: { securityContext: any } }>),
-    tap((val) => console.log(val[0].requestContext.securityContext)),
-    map((val) => val.map(v => v.renewedCube)),
+    map((val) => val as Array<{ renewedCube: string | undefined, requestContext: { securityContext: { tenantId: string } } }>),
+    map((val) => val.filter(v => v.renewedCube !== undefined) as Array<{ renewedCube: string, requestContext: { securityContext: { tenantId: string } } }>),
+    map((val) => val.map(v => ({ cube: v.renewedCube, tenantId: v.requestContext.securityContext.tenantId }))),
     // Buffer the values for 300ms
     bufferTime(100),
     map((renewedCubes) => renewedCubes.flat()),
-    map((val) => val.filter(v => v !== undefined)),
-    // Filter out any empty arrays
-    filter((renewedCubes) => renewedCubes.length > 0),
-    // Convert the array of arrays to an array of unique arrays
-    map((renewedCubes) => Array.from(new Set(renewedCubes))),
+    map(combineByTenant),
   );
   
   public constructor(
@@ -263,18 +270,19 @@ export class SubscriptionServer {
     this.subscriptionStore.clear();
   }
 
-  public async renewCubes(cubes) {
-    if (cubes.length === 0) {
+  public async renewCubes(updatedValues: Array<{ tenantId: string, cubes: Array<string> }>) {
+    if (updatedValues.length === 0) {
       return;
     }
 
-    const subs = await this.subscriptionStore.getSubscriptionsByCubeName(cubes);
+    const subs = updatedValues.map(({ tenantId, cubes }) => this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes)).flat();
 
     if (subs.length === 0) {
+      console.warn(`No subscriptions to renew for changed cubes ${updatedValues.map(v => `${v.tenantId}: ${v.cubes.length} cubes`).join(', ')}`);
       return;
     }
 
-    console.log(`Renewing ${subs.length} subs based on changed cubes`, cubes);
+    console.log(`Renewing ${subs.length} subs based on changed cubes ${updatedValues.map(v => `${v.tenantId}: ${v.cubes.length} cubes`).join(', ')}`);
     subs.map(async subscription => {
       this.handleMessage(subscription.connectionId, subscription.message, true);
     });
