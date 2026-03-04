@@ -103,7 +103,11 @@ export class LocalSubscriptionStore {
   }
 
   public getSubscriptionsByCubeName(tenantId: string, cubes: Array<string>) {
-    return this.getTenantSubscriptions(tenantId).filter(subscription => haveCommonElement(cubes, subscription.cubes));
+    const subs = this.getTenantSubscriptions(tenantId).filter(subscription => haveCommonElement(cubes, subscription.cubes));
+    if (subs.length > 0) {
+      console.log(`Refreshing ${subs.length} subscriptions for tenant ${tenantId} cause cubes ${cubes.join(', ')} have changed`);
+    }
+    return subs;
   }
 
   public async disconnect(connectionId: string) {

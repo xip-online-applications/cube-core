@@ -278,11 +278,10 @@ export class SubscriptionServer {
     const subs = updatedValues.map(({ tenantId, cubes }) => this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes)).flat();
 
     if (subs.length === 0) {
-      console.warn(`No subscriptions to renew for changed cubes ${updatedValues.map(v => `${v.tenantId}: ${v.cubes.length} cubes`).join(', ')}`);
       return;
     }
 
-    console.log(`Renewing ${subs.length} subs based on changed cubes ${updatedValues.map(v => `${v.tenantId}: ${v.cubes.length} cubes`).join(', ')}`);
+    console.log(`Renewing ${subs.length} subscriptions`);
     subs.map(async subscription => {
       this.handleMessage(subscription.connectionId, subscription.message, true);
     });
