@@ -37,10 +37,10 @@ export class SubscriptionServer {
   readonly #cubeRenewSubject = new Subject<unknown>();
 
   readonly #cubeRenewedPipe = this.#cubeRenewSubject.pipe(
-    tap((val) => console.log(val)),
     map((val) => ensureArray(val)),
     // Map only the renewedCube property
-    map((val) => val as Array<{ renewedCube: string | undefined }>),
+    map((val) => val as Array<{ renewedCube: string | undefined, requestContext: { securityContext: any } }>),
+    tap((val) => console.log(val[0].requestContext.securityContext)),
     map((val) => val.map(v => v.renewedCube)),
     // Buffer the values for 300ms
     bufferTime(100),
