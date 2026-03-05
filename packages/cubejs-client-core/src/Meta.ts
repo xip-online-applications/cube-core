@@ -43,6 +43,7 @@ const operators = {
     { name: 'set', title: 'is set' },
     { name: 'notSet', title: 'is not set' },
     { name: 'startsWith', title: 'starts with' },
+    { name: 'iStartsWith', title: 'starts with (case insensitive)' },
     { name: 'notStartsWith', title: 'does not start with' },
     { name: 'endsWith', title: 'ends with' },
     { name: 'notEndsWith', title: 'does not end with' },

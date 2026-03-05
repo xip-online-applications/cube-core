@@ -19,6 +19,7 @@ const VALID_BINARY_OPERATORS: BinaryOperator[] = [
   'lt',
   'lte',
   'startsWith',
+  'iStartsWith',
   'notStartsWith',
   'endsWith',
   'notEndsWith',

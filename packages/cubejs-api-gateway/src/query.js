@@ -120,6 +120,7 @@ const operators = [
   'contains',
   'notContains',
   'startsWith',
+  'iStartsWith',
   'notStartsWith',
   'endsWith',
   'notEndsWith',

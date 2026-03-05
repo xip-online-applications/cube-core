@@ -896,6 +896,7 @@ const PolicyFilterSchema = Joi.object().keys({
     'contains',
     'notContains',
     'startsWith',
+    'iStartsWith',
     'notStartsWith',
     'endsWith',
     'notEndsWith',

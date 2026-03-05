@@ -63,6 +63,11 @@ type FilterOperator =
  'notEquals' |
  'contains' |
  'notContains' |
+ 'startsWith' |
+ 'notStartsWith' |
+ 'endsWith' |
+ 'notEndsWith' |
+ 'iStartsWith' |
  'in' |
  'notIn' |
  'gt' |

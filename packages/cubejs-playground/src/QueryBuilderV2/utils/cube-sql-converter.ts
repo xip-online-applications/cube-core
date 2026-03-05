@@ -367,12 +367,12 @@ export class CubeSQLConverter {
     };
 
     if (filter.operator === 'contains') {
-      return repeatFilter(`${filter.member} ILIKE '%' || '{{value}}' || '%'`, filter.values, false);
+      return repeatFilter(`${filter.member} LIKE '%' || '{{value}}' || '%'`, filter.values, false);
     }
 
     if (filter.operator === 'notContains') {
       return repeatFilter(
-        `${filter.member} NOT ILIKE '%' || '{{value}}' || '%'`,
+        `${filter.member} NOT LIKE '%' || '{{value}}' || '%'`,
         filter.values,
         true
       );
@@ -380,6 +380,10 @@ export class CubeSQLConverter {
 
     if (filter.operator === 'startsWith') {
       return repeatFilter(`${filter.member} LIKE '{{value}}%'`, filter.values, false);
+    }
+
+    if (filter.operator === 'iStartsWith') {
+      return repeatFilter(`UPPER(${filter.member}) LIKE UPPER('{{value}}%')`, filter.values, false);
     }
 
     if (filter.operator === 'notStartsWith') {

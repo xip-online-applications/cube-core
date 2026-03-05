@@ -60,6 +60,7 @@ const StringFilter = inputObjectType({
     t.list.string('contains');
     t.list.string('notContains');
     t.list.string('startsWith');
+    t.list.string('iStartsWith');
     t.list.string('notStartsWith');
     t.list.string('notContains');
     t.list.string('endsWith');

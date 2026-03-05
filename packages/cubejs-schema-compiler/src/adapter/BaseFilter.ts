@@ -201,6 +201,15 @@ export class BaseFilter extends BaseDimension {
   }
 
   /**
+   * Returns SQL statement for the `iStartsWith` filter.
+   * @param {string} column Column name.
+   * @returns string
+   */
+  public iStartsWithWhere(column) {
+    return this.likeOr(column, false, 'starts', true);
+  }
+
+  /**
    * Returns SQL statement for the `notStartsWith` filter.
    * @param {string} column Column name.
    * @returns string
@@ -236,10 +245,10 @@ export class BaseFilter extends BaseDimension {
    * startsWith/endsWith).
    * @returns string
    */
-  public likeOr(column, not, type) {
+  public likeOr(column, not, type, upper = false) {
     type = type || 'contains';
     return `${join(not ? ' AND ' : ' OR ', this.filterParams().map(
-      p => this.likeIgnoreCase(column, not, p, type)
+      p => this.likeIgnoreCase(column, not, p, type, upper)
     ))}${this.orIsNullCheck(column, not)}`;
   }
 
@@ -251,10 +260,12 @@ export class BaseFilter extends BaseDimension {
    * @param {string} type Type of the condition (i.e. contains/startsWith/endsWith).
    * @returns string
    */
-  public likeIgnoreCase(column, not, param, type) {
+  public likeIgnoreCase(column, not, param, type, upper = false) {
     const p = (!type || type === 'contains' || type === 'ends') ? '\'%\' || ' : '';
     const s = (!type || type === 'contains' || type === 'starts') ? ' || \'%\'' : '';
-    return `${column}${not ? ' NOT' : ''} ILIKE ${p}${this.allocateParam(param)}${s}`;
+    const columnExpression = upper ? `UPPER(${column})` : column;
+    const valueExpression = upper ? `UPPER(${this.allocateParam(param)})` : this.allocateParam(param);
+    return `${columnExpression}${not ? ' NOT' : ''} LIKE ${p}${valueExpression}${s}`;
   }
 
   public orIsNullCheck(column, not) {

@@ -74,6 +74,7 @@ export type BinaryOperator =
   | 'contains'
   | 'notContains'
   | 'startsWith'
+  | 'iStartsWith'
   | 'notStartsWith'
   | 'endsWith'
   | 'notEndsWith'
