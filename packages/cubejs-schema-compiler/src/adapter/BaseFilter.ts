@@ -197,7 +197,7 @@ export class BaseFilter extends BaseDimension {
    * @returns string
    */
   public startsWithWhere(column) {
-    return this.likeOr(column, false, 'starts');
+    return this.likeOr(column, false, 'starts', 'LIKE');
   }
 
   /**
@@ -206,7 +206,7 @@ export class BaseFilter extends BaseDimension {
    * @returns string
    */
   public iStartsWithWhere(column) {
-    return this.likeOr(column, false, 'starts', true);
+    return this.likeOr(column, false, 'starts', 'LIKE', true);
   }
 
   /**
@@ -215,7 +215,7 @@ export class BaseFilter extends BaseDimension {
    * @returns string
    */
   public notStartsWithWhere(column) {
-    return this.likeOr(column, true, 'starts');
+    return this.likeOr(column, true, 'starts', 'LIKE');
   }
 
   /**
@@ -245,10 +245,10 @@ export class BaseFilter extends BaseDimension {
    * startsWith/endsWith).
    * @returns string
    */
-  public likeOr(column, not, type, upper = false) {
+  public likeOr(column, not, type, likeOperator = 'ILIKE', upper = false) {
     type = type || 'contains';
     return `${join(not ? ' AND ' : ' OR ', this.filterParams().map(
-      p => this.likeIgnoreCase(column, not, p, type, upper)
+      p => this.likeIgnoreCase(column, not, p, type, likeOperator, upper)
     ))}${this.orIsNullCheck(column, not)}`;
   }
 
@@ -260,12 +260,12 @@ export class BaseFilter extends BaseDimension {
    * @param {string} type Type of the condition (i.e. contains/startsWith/endsWith).
    * @returns string
    */
-  public likeIgnoreCase(column, not, param, type, upper = false) {
+  public likeIgnoreCase(column, not, param, type, likeOperator = 'ILIKE', upper = false) {
     const p = (!type || type === 'contains' || type === 'ends') ? '\'%\' || ' : '';
     const s = (!type || type === 'contains' || type === 'starts') ? ' || \'%\'' : '';
     const columnExpression = upper ? `UPPER(${column})` : column;
     const valueExpression = upper ? `UPPER(${this.allocateParam(param)})` : this.allocateParam(param);
-    return `${columnExpression}${not ? ' NOT' : ''} LIKE ${p}${valueExpression}${s}`;
+    return `${columnExpression}${not ? ' NOT' : ''} ${likeOperator} ${p}${valueExpression}${s}`;
   }
 
   public orIsNullCheck(column, not) {
