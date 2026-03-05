@@ -77,7 +77,7 @@ COPY packages/cubejs-event-emitter/ packages/cubejs-event-emitter/
 # COPY packages/cubejs-docker/ packages/cubejs-docker/
 # Frontend
 #COPY packages/cubejs-templates/ packages/cubejs-templates/
-#COPY packages/cubejs-client-core/ packages/cubejs-client-core/
+COPY packages/cubejs-client-core/ packages/cubejs-client-core/
 #COPY packages/cubejs-client-react/ packages/cubejs-client-react/
 #COPY packages/cubejs-client-vue/ packages/cubejs-client-vue/
 #COPY packages/cubejs-client-vue3/ packages/cubejs-client-vue3/

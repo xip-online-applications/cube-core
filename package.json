@@ -24,7 +24,7 @@
     "tsc": "tsc --build",
     "tsc:watch": "tsc --build --watch",
     "clean": "rimraf packages/*/{tsconfig.tsbuildinfo,lib,dist}",
-    "link:transai": "cd ./packages/cubejs-backend-shared && yarn link && yarn install && cd ../cubejs-backend-cloud && yarn link && yarn install && cd ../cubejs-backend-native && yarn link && yarn install && cd ../cubejs-server && yarn link && yarn install && yarn install && cd ../cubejs-server-core && yarn link && yarn install && cd ../cubejs-api-gateway && yarn link && yarn install && cd ../cubejs-schema-compiler && yarn link && yarn install && cd ../cubejs-query-orchestrator && yarn link && yarn install && cd ../cubejs-postgres-driver && yarn link && yarn install && cd ../cubejs-cubestore-driver && yarn link && yarn install && cd ../cubejs-event-emitter && yarn link && yarn install"
+    "link:transai": "cd ./packages/cubejs-backend-shared && yarn link && yarn install && cd ../cubejs-backend-cloud && yarn link && yarn install && cd ../cubejs-client-core && yarn link  && yarn install && cd ../cubejs-backend-native && yarn link && yarn install && cd ../cubejs-server && yarn link && yarn install && yarn install && cd ../cubejs-server-core && yarn link && yarn install && cd ../cubejs-api-gateway && yarn link && yarn install && cd ../cubejs-schema-compiler && yarn link && yarn install && cd ../cubejs-query-orchestrator && yarn link && yarn install && cd ../cubejs-postgres-driver && yarn link && yarn install && cd ../cubejs-cubestore-driver && yarn link && yarn install && cd ../cubejs-event-emitter && yarn link && yarn install"
   },
   "author": "Cube Dev, Inc.",
   "dependencies": {
