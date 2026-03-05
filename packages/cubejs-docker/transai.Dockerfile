@@ -77,13 +77,13 @@ COPY packages/cubejs-event-emitter/ packages/cubejs-event-emitter/
 # COPY packages/cubejs-docker/ packages/cubejs-docker/
 # Frontend
 #COPY packages/cubejs-templates/ packages/cubejs-templates/
-COPY packages/cubejs-client-core/ packages/cubejs-client-core/
+#COPY packages/cubejs-client-core/ packages/cubejs-client-core/
 #COPY packages/cubejs-client-react/ packages/cubejs-client-react/
 #COPY packages/cubejs-client-vue/ packages/cubejs-client-vue/
 #COPY packages/cubejs-client-vue3/ packages/cubejs-client-vue3/
 #COPY packages/cubejs-client-ngx/ packages/cubejs-client-ngx/
 #COPY packages/cubejs-client-ws-transport/ packages/cubejs-client-ws-transport/
-COPY packages/cubejs-playground/ packages/cubejs-playground/
+#COPY packages/cubejs-playground/ packages/cubejs-playground/
 
 RUN yarn install
 RUN yarn lerna run build
