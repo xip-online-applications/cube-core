@@ -69,7 +69,7 @@
     "@ant-design/compatible": "^1.0.1",
     "@ant-design/icons": "^5.3.5",
     "@cube-dev/ui-kit": "0.52.3",
-    "@cubejs-client/core": "1.6.19",
+    "@cubejs-client/core": "file:../cubejs-client-core",
     "@cubejs-client/react": "1.6.19",
     "@types/flexsearch": "^0.7.3",
     "@types/node": "^20",
