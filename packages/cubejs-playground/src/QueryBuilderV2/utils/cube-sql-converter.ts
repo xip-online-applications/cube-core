@@ -367,12 +367,12 @@ export class CubeSQLConverter {
     };
 
     if (filter.operator === 'contains') {
-      return repeatFilter(`${filter.member} LIKE '%' || '{{value}}' || '%'`, filter.values, false);
+      return repeatFilter(`${filter.member} ILIKE '%' || '{{value}}' || '%'`, filter.values, false);
     }
 
     if (filter.operator === 'notContains') {
       return repeatFilter(
-        `${filter.member} NOT LIKE '%' || '{{value}}' || '%'`,
+        `${filter.member} NOT ILIKE '%' || '{{value}}' || '%'`,
         filter.values,
         true
       );
