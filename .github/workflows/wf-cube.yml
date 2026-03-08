@@ -31,3 +31,4 @@ jobs:
           tag: 'dev-${{ env.tag }}'
           context: ./
           dockerfile: ./packages/cubejs-docker/dev.Dockerfile
+          target: final
