@@ -28,6 +28,6 @@ jobs:
         uses: xip-online-applications/gha-workflow-templates/ghcr-build-push@main
         with:
           repository: '${{ github.repository }}/cube-api'
-          tag: ${{ env.tag }}
+          tag: 'dev-${{ env.tag }}'
           context: ./
-          dockerfile: ./packages/cubejs-docker/transai.Dockerfile
+          dockerfile: ./packages/cubejs-docker/dev.Dockerfile
