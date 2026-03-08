@@ -5,7 +5,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: '${{ github.repository }}-api'
+  IMAGE_NAME: ${{ github.repository }}
   tag: 'transcube-${{ github.sha }}'
 
 jobs:
@@ -27,7 +27,7 @@ jobs:
       - name: Build & push
         uses: xip-online-applications/gha-workflow-templates/ghcr-build-push@main
         with:
-          repository: '${{ github.repository }}/cube'
+          repository: '${{ github.repository }}/cube-api'
           tag: ${{ env.tag }}
           context: ./
           dockerfile: ./packages/cubejs-docker/transai.Dockerfile
