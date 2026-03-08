@@ -27,7 +27,7 @@
     "dist/src/*"
   ],
   "dependencies": {
-    "@cubejs-backend/event-emitter": "file:../cubejs-event-emitter",
+    "@cubejs-backend/event-emitter": "1.6.19",
     "@cubejs-backend/native": "1.6.19",
     "@cubejs-backend/query-orchestrator": "1.6.19",
     "@cubejs-backend/shared": "1.6.19",

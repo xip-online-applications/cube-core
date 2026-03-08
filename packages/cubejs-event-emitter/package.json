@@ -1,6 +1,6 @@
 {
   "name": "@cubejs-backend/event-emitter",
-  "version": "1.6.17",
+  "version": "1.6.19",
   "description": "Cube Cloud package",
   "main": "dist/src/index.js",
   "typings": "dist/src/index.d.ts",
