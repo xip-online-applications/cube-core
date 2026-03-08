@@ -335,9 +335,12 @@ impl BaseFilter {
             FilterOperator::StartsWith => {
                 self.starts_with_where(&member_sql, plan_templates, filters_context, &member_type)?
             }
-            FilterOperator::IStartsWith => {
-                self.starts_with_where(&member_sql, plan_templates, filters_context, &member_type)?
-            }
+            FilterOperator::IStartsWith => self.i_starts_with_where(
+                &member_sql,
+                plan_templates,
+                filters_context,
+                &member_type,
+            )?,
             FilterOperator::NotStartsWith => self.not_starts_with_where(
                 &member_sql,
                 plan_templates,
@@ -758,7 +761,16 @@ impl BaseFilter {
         _filters_context: &FiltersContext,
         member_type: &Option<String>,
     ) -> Result<String, CubeError> {
-        self.like_or_where(member_sql, false, true, true, plan_templates, member_type)
+        self.like_or_where(
+            member_sql,
+            false,
+            true,
+            true,
+            false,
+            true,
+            plan_templates,
+            member_type,
+        )
     }
 
     fn not_contains_where(
@@ -768,7 +780,16 @@ impl BaseFilter {
         _filters_context: &FiltersContext,
         member_type: &Option<String>,
     ) -> Result<String, CubeError> {
-        self.like_or_where(member_sql, true, true, true, plan_templates, member_type)
+        self.like_or_where(
+            member_sql,
+            true,
+            true,
+            true,
+            false,
+            true,
+            plan_templates,
+            member_type,
+        )
     }
 
     fn starts_with_where(
@@ -778,7 +799,35 @@ impl BaseFilter {
         _filters_context: &FiltersContext,
         member_type: &Option<String>,
     ) -> Result<String, CubeError> {
-        self.like_or_where(member_sql, false, false, true, plan_templates, member_type)
+        self.like_or_where(
+            member_sql,
+            false,
+            false,
+            true,
+            false,
+            true,
+            plan_templates,
+            member_type,
+        )
+    }
+
+    fn i_starts_with_where(
+        &self,
+        member_sql: &str,
+        plan_templates: &PlanSqlTemplates,
+        _filters_context: &FiltersContext,
+        member_type: &Option<String>,
+    ) -> Result<String, CubeError> {
+        self.like_or_where(
+            member_sql,
+            false,
+            false,
+            true,
+            true,
+            false,
+            plan_templates,
+            member_type,
+        )
     }
 
     fn not_starts_with_where(
@@ -788,7 +837,16 @@ impl BaseFilter {
         _filters_context: &FiltersContext,
         member_type: &Option<String>,
     ) -> Result<String, CubeError> {
-        self.like_or_where(member_sql, true, false, true, plan_templates, member_type)
+        self.like_or_where(
+            member_sql,
+            true,
+            false,
+            true,
+            false,
+            true,
+            plan_templates,
+            member_type,
+        )
     }
 
     fn ends_with_where(
@@ -798,7 +856,16 @@ impl BaseFilter {
         _filters_context: &FiltersContext,
         member_type: &Option<String>,
     ) -> Result<String, CubeError> {
-        self.like_or_where(member_sql, false, true, false, plan_templates, member_type)
+        self.like_or_where(
+            member_sql,
+            false,
+            true,
+            false,
+            false,
+            true,
+            plan_templates,
+            member_type,
+        )
     }
 
     fn not_ends_with_where(
@@ -808,7 +875,16 @@ impl BaseFilter {
         _filters_context: &FiltersContext,
         member_type: &Option<String>,
     ) -> Result<String, CubeError> {
-        self.like_or_where(member_sql, true, true, false, plan_templates, member_type)
+        self.like_or_where(
+            member_sql,
+            true,
+            true,
+            false,
+            false,
+            true,
+            plan_templates,
+            member_type,
+        )
     }
 
     fn like_or_where(
@@ -817,13 +893,38 @@ impl BaseFilter {
         not: bool,
         start_wild: bool,
         end_wild: bool,
+        upper: bool,
+        use_ilike: bool,
         plan_templates: &PlanSqlTemplates,
         member_type: &Option<String>,
     ) -> Result<String, CubeError> {
         let values = self.filter_cast_and_allocate_values(member_type, plan_templates)?;
+        let column_expr = if upper {
+            plan_templates.scalar_function(
+                "UPPER".to_string(),
+                vec![member_sql.to_string()],
+                None,
+                None,
+            )?
+        } else {
+            member_sql.to_string()
+        };
+
         let like_parts = values
             .into_iter()
-            .map(|v| plan_templates.ilike(member_sql, &v, start_wild, end_wild, not))
+            .map(|v| {
+                let value_expr = if upper {
+                    plan_templates.scalar_function("UPPER".to_string(), vec![v], None, None)?
+                } else {
+                    v
+                };
+
+                if use_ilike {
+                    plan_templates.ilike(&column_expr, &value_expr, start_wild, end_wild, not)
+                } else {
+                    plan_templates.like(&column_expr, &value_expr, start_wild, end_wild, not)
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let logical_symbol = if not { " AND " } else { " OR " };
         let null_check = if self.is_need_null_chek(not) {

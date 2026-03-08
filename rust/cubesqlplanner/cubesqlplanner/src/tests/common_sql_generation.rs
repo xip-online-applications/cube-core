@@ -155,3 +155,61 @@ fn test_segment_as_dimension_in_pre_aggregation_query() {
 
     insta::assert_snapshot!(sql);
 }
+
+#[test]
+fn test_istarts_with_uses_upper_like_not_ilike() {
+    let schema = MockSchema::from_yaml_file("common/simple.yaml");
+    let test_context = TestContext::new(schema).unwrap();
+
+    let query_yaml = indoc! {"
+        measures:
+          - customers.count
+        filters:
+          - dimension: customers.name
+            operator: iStartsWith
+            values:
+              - fe
+    "};
+
+    let sql = test_context
+        .build_sql(query_yaml)
+        .expect("Should generate SQL for iStartsWith");
+
+    assert!(
+        sql.contains(" LIKE "),
+        "iStartsWith should use LIKE operator"
+    );
+    assert!(
+        !sql.contains(" ILIKE "),
+        "iStartsWith should not use ILIKE operator"
+    );
+    assert!(
+        sql.matches("UPPER(").count() >= 2,
+        "iStartsWith should uppercase both column and value"
+    );
+}
+
+#[test]
+fn test_starts_with_still_uses_ilike() {
+    let schema = MockSchema::from_yaml_file("common/simple.yaml");
+    let test_context = TestContext::new(schema).unwrap();
+
+    let query_yaml = indoc! {"
+        measures:
+          - customers.count
+        filters:
+          - dimension: customers.name
+            operator: startsWith
+            values:
+              - fe
+    "};
+
+    let sql = test_context
+        .build_sql(query_yaml)
+        .expect("Should generate SQL for startsWith");
+
+    assert!(
+        sql.contains(" ILIKE "),
+        "startsWith should continue to use ILIKE"
+    );
+}

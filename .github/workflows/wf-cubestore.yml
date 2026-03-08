@@ -1,0 +1,31 @@
+on:
+  push:
+    branches:
+      - master
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  tag: 'transcubestore-${{ github.sha }}'
+
+jobs:
+  build-and-push-image:
+    name: Build Latest - TransAI Cube Store
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build & push
+        uses: xip-online-applications/gha-workflow-templates/ghcr-build-push@main
+        with:
+          repository: '${{ github.repository }}/cube-store'
+          tag: ${{ env.tag }}
+          context: ./rust
+          dockerfile: ./cubestore/Dockerfile

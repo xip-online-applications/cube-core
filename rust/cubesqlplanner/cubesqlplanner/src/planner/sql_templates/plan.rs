@@ -788,6 +788,32 @@ impl PlanSqlTemplates {
             },
         )
     }
+
+    pub fn like(
+        &self,
+        column: &str,
+        value: &str,
+        start_wild: bool,
+        end_wild: bool,
+        not: bool,
+    ) -> Result<String, CubeError> {
+        let pattern = self.render.render_template(
+            &"filters/like_pattern",
+            context! {
+                start_wild => start_wild,
+                value => value,
+                end_wild => end_wild
+            },
+        )?;
+        self.render.render_template(
+            &"expressions/like",
+            context! {
+                expr => column,
+                negated => not,
+                pattern => pattern
+            },
+        )
+    }
     pub fn rolling_window_expr_timestamp_cast(&self, value: &str) -> Result<String, CubeError> {
         self.render.render_template(
             &"expressions/rolling_window_expr_timestamp_cast",
