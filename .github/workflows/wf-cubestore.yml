@@ -28,4 +28,4 @@ jobs:
           repository: '${{ github.repository }}/cube-store'
           tag: ${{ env.tag }}
           context: ./rust
-          dockerfile: ./cubestore/Dockerfile
+          dockerfile: ./rust/cubestore/Dockerfile
