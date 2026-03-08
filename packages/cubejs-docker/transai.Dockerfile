@@ -10,7 +10,7 @@ RUN DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
     # python3 package is necessary to install `python3` executable for node-gyp
     && apt-get install -y --no-install-recommends libssl3 curl \
-       cmake python3 python3.11 libpython3.11-dev gcc g++ make cmake openjdk-17-jdk-headless \
+        cmake python3 python3.11 libpython3.11-dev gcc g++ make cmake openjdk-17-jdk-headless pkg-config libssl-dev clang libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ENV RUSTUP_HOME=/usr/local/rustup
@@ -72,6 +72,8 @@ COPY packages/cubejs-server-core/ packages/cubejs-server-core/
 #COPY packages/cubejs-jdbc-driver/ packages/cubejs-jdbc-driver/
 #COPY packages/cubejs-databricks-jdbc-driver/ packages/cubejs-databricks-jdbc-driver/
 COPY packages/cubejs-event-emitter/ packages/cubejs-event-emitter/
+COPY rust/cubeshared/ rust/cubeshared/
+COPY rust/cubestore/ rust/cubestore/
 # Skip
 # COPY packages/cubejs-testing/ packages/cubejs-testing/
 # COPY packages/cubejs-docker/ packages/cubejs-docker/
@@ -87,6 +89,13 @@ COPY packages/cubejs-event-emitter/ packages/cubejs-event-emitter/
 
 RUN yarn install
 RUN yarn lerna run build
+
+# Build CubeStore from source and keep executable for runtime wiring.
+# Use the nightly-2025-08-01 toolchain, which is also used in the CI, to ensure that the built binary is compatible with the one used in official cube CI builds to ensure it works.
+RUN rustup toolchain install nightly-2025-08-01 \
+    && cd rust/cubestore \
+    && cargo +nightly-2025-08-01 build --release -p cubestore \
+    && cp target/release/cubestored /cubejs/cubestored
 
 RUN find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +
 
@@ -106,6 +115,7 @@ RUN DEBIAN_FRONTEND=noninteractive \
 
 ENV TERM rxvt-unicode
 ENV NODE_ENV production
+ENV CUBESTORE_SKIP_POST_INSTALL=true
 
 WORKDIR /cube
 COPY packages/cubejs-docker/bin bin
@@ -113,6 +123,7 @@ COPY packages/cubejs-docker/bin bin
 # npm, but rather copies all the artifacts from the dev image and links them to
 # the /cube directory
 COPY --from=build /cubejs /cube-build
+
 RUN cd /cube-build && yarn run link:transai
 COPY packages/cubejs-docker/package.json.transai package.json
 
@@ -124,6 +135,12 @@ RUN yarn config set network-timeout 120000 -g
 # action. So, a process will use the root lock file here.
 RUN yarn install --prod && yarn cache clean && yarn link:dev
 
+# Force @cubejs-backend/cubestore to use the in-image custom binary.
+RUN mkdir -p /cube/node_modules/@cubejs-backend/cubestore/downloaded/latest/bin \
+    && cp /cube-build/cubestored /cube/node_modules/@cubejs-backend/cubestore/downloaded/latest/bin/cubestored \
+    && chmod +x /cube/node_modules/@cubejs-backend/cubestore/downloaded/latest/bin/cubestored \
+    && sha256sum /cube/node_modules/@cubejs-backend/cubestore/downloaded/latest/bin/cubestored | awk '{print $1}' > /cube/transai-cubestored.sha256
+
 # By default Node dont search in parent directory from /cube/conf, @todo Reaserch a little bit more
 ENV NODE_PATH /cube/conf/node_modules:/cube/node_modules
 ENV PYTHONUNBUFFERED=1
@@ -134,5 +151,5 @@ WORKDIR /cube/conf
 
 EXPOSE 4000
 
-CMD ["cubejs", "server"]
+CMD ["sh", "-c", "CUSTOM_CUBESTORE_BIN=/cube/node_modules/@cubejs-backend/cubestore/downloaded/latest/bin/cubestored; EXPECTED_SHA=$(cat /cube/transai-cubestored.sha256 2>/dev/null || true); ACTUAL_SHA=$(sha256sum \"$CUSTOM_CUBESTORE_BIN\" 2>/dev/null | awk '{print $1}' || true); if [ -n \"$ACTUAL_SHA\" ] && [ \"$EXPECTED_SHA\" = \"$ACTUAL_SHA\" ]; then echo \"[transAI/Cube] Docker runtime using custom Rust cubestored (sha256=$ACTUAL_SHA)\"; else echo \"[transAI/Cube][WARN] Docker runtime could not verify custom cubestored (expected=$EXPECTED_SHA actual=$ACTUAL_SHA path=$CUSTOM_CUBESTORE_BIN)\"; fi; exec cubejs server"]
 

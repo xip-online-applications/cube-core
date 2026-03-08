@@ -6,6 +6,8 @@
 !yarn.lock
 !lerna.json
 !packages/
+!rust/cubeshared/
+!rust/cubestore/
 !rust/cubestore/js-wrapper/
 !rust/cubestore/tsconfig.json
 !rust/cubestore/package.json

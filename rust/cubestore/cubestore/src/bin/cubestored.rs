@@ -56,7 +56,7 @@ fn main() {
         .unwrap();
     init_cube_logger(enable_telemetry);
 
-    log::info!("Cube Store version {}", version);
+    log::info!("transAI Cube Store version {}", version);
 
     let config = Config::default();
 
