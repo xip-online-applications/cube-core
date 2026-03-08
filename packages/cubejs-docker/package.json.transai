@@ -13,6 +13,8 @@
       "link:transai": "cd ./packages/cubejs-backend-shared && yarn link && cd ../cubejs-backend-cloud && yarn link && cd ../cubejs-backend-native && yarn link && cd ../cubejs-server && yarn link && cd ../cubejs-server-core && yarn link && cd ../cubejs-api-gateway && yarn link && cd ../cubejs-schema-compiler && yarn link && cd ../cubejs-query-orchestrator && yarn link && cd ../cubejs-postgres-driver && yarn link && cd ../cubejs-cubestore-driver && yarn link && cd ../cubejs-client-core && yarn link && cd ../cubejs-client-ws-transport && yarn link && cd ../cubejs-event-emitter && yarn link"
   },
   "dependencies": {
+    "@cubejs-backend/cubestore": "file:/cube-build/rust/cubestore",
+    "@cubejs-backend/cubestore-driver": "file:/cube-build/packages/cubejs-cubestore-driver",
     "@cubejs-backend/postgres-driver": "file:/cube-build/packages/cubejs-postgres-driver",
     "@cubejs-backend/server": "file:/cube-build/packages/cubejs-server",
     "cubejs-cli": "file:/cube-build/packages/cubejs-cli",
