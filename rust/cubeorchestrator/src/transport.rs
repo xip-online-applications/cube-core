@@ -46,6 +46,7 @@ pub enum FilterOperator {
     NotEquals,
     Contains,
     NotContains,
+    IStartsWith,
     In,
     NotIn,
     Gt,

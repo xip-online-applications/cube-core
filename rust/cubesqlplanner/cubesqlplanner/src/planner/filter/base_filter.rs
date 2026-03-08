@@ -335,6 +335,9 @@ impl BaseFilter {
             FilterOperator::StartsWith => {
                 self.starts_with_where(&member_sql, plan_templates, filters_context, &member_type)?
             }
+            FilterOperator::IStartsWith => {
+                self.starts_with_where(&member_sql, plan_templates, filters_context, &member_type)?
+            }
             FilterOperator::NotStartsWith => self.not_starts_with_where(
                 &member_sql,
                 plan_templates,
