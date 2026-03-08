@@ -5,7 +5,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: '${{ github.repository }}-core'
+  IMAGE_NAME: '${{ github.repository }}-api'
   tag: 'transcube-${{ github.sha }}'
 
 jobs:
