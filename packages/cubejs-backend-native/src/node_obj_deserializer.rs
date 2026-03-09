@@ -12,7 +12,7 @@ pub struct JsDeserializationError(String);
 
 impl fmt::Display for JsDeserializationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "JS Deserialization Error: {}", self.0)
+        write!(f, "JS -> Rust Deserialization Error: {}", self.0)
     }
 }
 
@@ -103,7 +103,7 @@ impl<'de> Deserializer<'de> for JsValueDeserializer<'_, '_> {
             }
 
             Err(JsDeserializationError(
-                "Unsupported number type for deserialization".to_string(),
+                "JS -> Rust: Unsupported number type for deserialization".to_string(),
             ))
         } else if self.value.is_a::<JsBoolean, _>(self.cx) {
             let value = self
@@ -135,7 +135,7 @@ impl<'de> Deserializer<'de> for JsValueDeserializer<'_, '_> {
             visitor.visit_none()
         } else {
             Err(JsDeserializationError(
-                "Unsupported type for deserialization".to_string(),
+                "JS -> Rust: Unsupported type for deserialization".to_string(),
             ))
         }
     }
@@ -192,7 +192,9 @@ impl<'de> Deserializer<'de> for JsValueDeserializer<'_, '_> {
             let deserializer = JsArrayDeserializer::new(self.cx, js_array);
             visitor.visit_seq(deserializer)
         } else {
-            Err(JsDeserializationError("expected an array".to_string()))
+            Err(JsDeserializationError(
+                "JS -> Rust: expected an array".to_string(),
+            ))
         }
     }
 
@@ -227,7 +229,9 @@ impl<'de> Deserializer<'de> for JsValueDeserializer<'_, '_> {
             let deserializer = JsObjectDeserializer::new(self.cx, js_object);
             visitor.visit_map(deserializer)
         } else {
-            Err(JsDeserializationError("expected an object".to_string()))
+            Err(JsDeserializationError(
+                "JS -> Rust: expected an object".to_string(),
+            ))
         }
     }
 
@@ -273,9 +277,9 @@ impl<'a, 'b> JsObjectDeserializer<'a, 'b> {
     fn new(cx: &'a mut FunctionContext<'b>, js_object: Handle<'a, JsObject>) -> Self {
         let keys = js_object
             .get_own_property_names(cx)
-            .expect("Failed to get object keys")
+            .expect("JS -> Rust: Failed to get object keys")
             .to_vec(cx)
-            .expect("Failed to convert keys to Vec")
+            .expect("JS -> Rust: Failed to convert keys to Vec")
             .iter()
             .filter_map(|k| {
                 k.downcast_or_throw::<JsString, _>(cx)
@@ -317,7 +321,7 @@ impl<'de> MapAccess<'de> for JsObjectDeserializer<'_, '_> {
         let value = self
             .js_object
             .get(self.cx, key.as_str())
-            .expect("Failed to get value by key");
+            .expect("JS -> Rust: Failed to get value by key");
         seed.deserialize(JsValueDeserializer::new(self.cx, value))
     }
 }

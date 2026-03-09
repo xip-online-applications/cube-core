@@ -166,6 +166,7 @@ export type Sql4SqlResponse = Sql4SqlCommon & (Sql4SqlOk | Sql4SqlError);
 let loadedNative: any = null;
 
 export function loadNative() {
+  console.log('Loading @cubejs-backend/native for', process.arch, process.platform, 'with Node.js', process.version);
   if (loadedNative) {
     return loadedNative;
   }
