@@ -168,6 +168,7 @@ COPY packages/cubejs-playground/ packages/cubejs-playground/
 
 RUN yarn build
 RUN yarn lerna run build
+RUN yarn --cwd packages/cubejs-backend-native native:build-release
 
 RUN find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +
 
@@ -180,6 +181,9 @@ RUN apt-get update \
 
 COPY --from=build /cubejs .
 COPY --from=prod_dependencies /cubejs .
+# Force runtime to use the binary compiled from this checkout.
+# `loadNative()` tries `/packages/cubejs-backend-native/index.node` first.
+COPY --from=build /cubejs/packages/cubejs-backend-native/index.node /cubejs/packages/cubejs-backend-native/index.node
 
 COPY packages/cubejs-docker/bin/cubejs-dev /usr/local/bin/cubejs
 
