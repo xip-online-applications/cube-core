@@ -173,7 +173,7 @@ export function loadNative() {
   // Development version
   if (fs.existsSync(path.join(__dirname, '/../../index.node'))) {
     console.log('Loading development native from', path.join(__dirname, '/../../index.node'));
-    loadedNative = require(path.jsin(__dirname, '/../../index.node'));
+    loadedNative = require(path.join(__dirname, '/../../index.node'));
     return loadedNative;
   }
 
