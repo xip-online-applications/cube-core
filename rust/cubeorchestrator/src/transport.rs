@@ -299,8 +299,10 @@ pub struct NormalizedQuery {
     pub ungrouped: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResultType>,
+    // Filters are forwarded metadata for result transformation and are not
+    // interpreted in cubeorchestrator, so keep this permissive.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub filters: Option<Vec<QueryFilterOrLogicalFilter>>,
+    pub filters: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub row_limit: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
