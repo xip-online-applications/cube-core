@@ -53,7 +53,7 @@ pub fn transform_value(value: DBResponseValue, type_: &str) -> DBResponsePrimiti
             let s_norm = re.replace(s, "$1:00");
 
 
-            let formatted = DateTime::parse_from_rfc3339(s_norm)
+            let formatted = DateTime::parse_from_rfc3339(&s_norm)
                 .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%S%.3f").to_string())
                 .or_else(|_| {
                     NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.3f").map(|dt| {
