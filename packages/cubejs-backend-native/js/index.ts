@@ -166,7 +166,6 @@ export type Sql4SqlResponse = Sql4SqlCommon & (Sql4SqlOk | Sql4SqlError);
 let loadedNative: any = null;
 
 export function loadNative() {
-  console.log('Loading @cubejs-backend/native for', process.arch, process.platform, 'with Node.js', process.version);
   if (loadedNative) {
     return loadedNative;
   }
@@ -174,7 +173,7 @@ export function loadNative() {
   // Development version
   if (fs.existsSync(path.join(__dirname, '/../../index.node'))) {
     console.log('Loading development native from', path.join(__dirname, '/../../index.node'));
-    loadedNative = require(path.join(__dirname, '/../../index.node'));
+    loadedNative = require(path.jsin(__dirname, '/../../index.node'));
     return loadedNative;
   }
 
