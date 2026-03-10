@@ -57,7 +57,12 @@ export class LocalSubscriptionStore {
 
   public async unsubscribe(connectionId: string, subscriptionId: SubscriptionId) {
     const connection = this.getConnectionOrCreate(connectionId);
-    connection.subscriptions.delete(subscriptionId);
+    
+    if (connection.subscriptions.has(subscriptionId)) {
+      connection.subscriptions.delete(subscriptionId);
+    } else {
+      console.warn(`Trying to unsubscribe non-existing subscription ${subscriptionId} for connection ${connectionId}`);
+    }
   }
 
   public getAllSubscriptions() {
