@@ -4,6 +4,14 @@ interface LocalSubscriptionStoreOptions {
 
 export type SubscriptionId = string | number;
 
+const normalizeSubscriptionId = (subscriptionId: SubscriptionId): string => {
+  if (typeof subscriptionId === 'number') {
+    return subscriptionId.toString();
+  }
+
+  return subscriptionId;
+};
+
 export type LocalSubscriptionStoreSubscription = {
   message: any,
   state: any,
@@ -46,9 +54,10 @@ export class LocalSubscriptionStore {
     return connection.subscriptions.get(subscriptionId);
   }
 
-  public async subscribe(connectionId: string, subscriptionId: string, subscription) {
+  public async subscribe(connectionId: string, subscriptionId: SubscriptionId, subscription) {
+    const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
     const connection = this.getConnectionOrCreate(connectionId);
-    connection.subscriptions.set(subscriptionId, {
+    connection.subscriptions.set(normalizedSubscriptionId, {
       ...subscription,
       cubes: getCubeNames(subscription.message?.params?.query),
       timestamp: new Date()
@@ -57,9 +66,10 @@ export class LocalSubscriptionStore {
 
   public async unsubscribe(connectionId: string, subscriptionId: SubscriptionId) {
     const connection = this.getConnectionOrCreate(connectionId);
+    const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
 
-    if (connection.subscriptions.has(subscriptionId)) {
-      connection.subscriptions.delete(subscriptionId);
+    if (connection.subscriptions.has(normalizedSubscriptionId)) {
+      connection.subscriptions.delete(normalizedSubscriptionId);
     } else {
       console.warn(`Trying to unsubscribe non-existing subscription ${typeof subscriptionId} ${subscriptionId} for connection ${connectionId}`);
     }
