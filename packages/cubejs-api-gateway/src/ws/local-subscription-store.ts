@@ -20,7 +20,7 @@ export type LocalSubscriptionStoreSubscription = {
 };
 
 export type LocalSubscriptionStoreConnection = {
-  subscriptions: Map<SubscriptionId, LocalSubscriptionStoreSubscription>,
+  subscriptions: Map<string, LocalSubscriptionStoreSubscription>,
   authContext?: any,
 };
 
@@ -49,9 +49,10 @@ export class LocalSubscriptionStore {
     this.hearBeatInterval = options.heartBeatInterval || 60;
   }
 
-  public async getSubscription(connectionId: string, subscriptionId: string) {
+  public async getSubscription(connectionId: string, subscriptionId: SubscriptionId) {
     const connection = this.getConnectionOrCreate(connectionId);
-    return connection.subscriptions.get(subscriptionId);
+    const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
+    return connection.subscriptions.get(normalizedSubscriptionId);
   }
 
   public async subscribe(connectionId: string, subscriptionId: SubscriptionId, subscription) {
@@ -143,7 +144,7 @@ export class LocalSubscriptionStore {
       return connect;
     }
 
-    const connection = { subscriptions: new Map() };
+    const connection: LocalSubscriptionStoreConnection = { subscriptions: new Map<string, LocalSubscriptionStoreSubscription>() };
     this.connections.set(connectionId, connection);
 
     return connection;
