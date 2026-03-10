@@ -49,8 +49,12 @@ export class LocalSubscriptionStore {
     this.hearBeatInterval = options.heartBeatInterval || 60;
   }
 
-  public async getSubscription(connectionId: string, subscriptionId: SubscriptionId) {
-    const connection = this.getConnectionOrCreate(connectionId);
+  public async getSubscription(connectionId: string, subscriptionId: SubscriptionId): Promise<LocalSubscriptionStoreSubscription | undefined> {
+    const connection = this.getConnection(connectionId);
+    if (!connection) {
+      return undefined;
+    }
+
     const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
     return connection.subscriptions.get(normalizedSubscriptionId);
   }
@@ -66,7 +70,10 @@ export class LocalSubscriptionStore {
   }
 
   public async unsubscribe(connectionId: string, subscriptionId: SubscriptionId) {
-    const connection = this.getConnectionOrCreate(connectionId);
+    const connection = this.getConnection(connectionId);
+    if (!connection) {
+      return;
+    }
     const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
 
     if (connection.subscriptions.has(normalizedSubscriptionId)) {
@@ -139,7 +146,7 @@ export class LocalSubscriptionStore {
   }
 
   protected getConnectionOrCreate(connectionId: string): LocalSubscriptionStoreConnection {
-    const connect = this.connections.get(connectionId);
+    const connect = this.getConnection(connectionId);
     if (connect) {
       return connect;
     }
@@ -148,6 +155,10 @@ export class LocalSubscriptionStore {
     this.connections.set(connectionId, connection);
 
     return connection;
+  }
+
+  protected getConnection(connectionId: string): LocalSubscriptionStoreConnection | undefined {
+    return this.connections.get(connectionId);
   }
 
   public clear() {
