@@ -93,7 +93,7 @@ export class LocalSubscriptionStore {
 
   public getTenantSubscriptions(tenantId: string) {
     const now = Date.now();
-    const staleThreshold = this.hearBeatInterval * 4 * 1000;
+    const staleThreshold = this.heartBeatInterval * 4 * 1000;
     const result: Array<{ connectionId: string } & LocalSubscriptionStoreSubscription> = [];
 
     for (const [connectionId, connection] of this.connections) {
