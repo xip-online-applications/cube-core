@@ -65,6 +65,8 @@ export class LocalSubscriptionStore {
     }
 
     if (!connection.subscriptions.has(subscriptionId)) {
+      const activeSubscriptions = Array.from(connection.subscriptions.keys()).map(id => [typeof id, id]).flat().join(', ');
+      console.warn(`[${connectionId}] Trying to unsubscribe non-existing subscription ${typeof subscriptionId} ${subscriptionId}. Active subscriptions: ${activeSubscriptions}`);
       return;
     }
 
