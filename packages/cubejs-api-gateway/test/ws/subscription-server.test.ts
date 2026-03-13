@@ -65,13 +65,15 @@ describe('SubscriptionServer', () => {
       expect(mockSubscriptionStore.unsubscribe).toHaveBeenCalledWith('conn-1', 'msg-1');
     });
 
-    it('should accept unsubscribe with numeric messageId', async () => {
+    it('should convert numeric unsubscribe id to string', async () => {
       const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
       const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
 
       await server.processMessage('conn-1', JSON.stringify({ unsubscribe: 123 }));
 
-      expect(mockSubscriptionStore.unsubscribe).toHaveBeenCalledWith('conn-1', 123);
+      const callArgs = mockSubscriptionStore.unsubscribe.mock.calls[0];
+      expect(typeof callArgs[1]).toBe('string');
+      expect(callArgs[1]).toBe('123');
     });
 
     it('should accept valid load message', async () => {
@@ -89,7 +91,7 @@ describe('SubscriptionServer', () => {
       expect(sentMessages).toContainEqual({ messageProcessedId: '123' });
     });
 
-    it('should accept messageId as number', async () => {
+    it('should convert numeric messageId to string', async () => {
       const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface, sentMessages } = createMocks();
       const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
 
@@ -101,7 +103,10 @@ describe('SubscriptionServer', () => {
       await server.processMessage('conn-1', JSON.stringify(message));
 
       expect(mockApiGateway.load).toHaveBeenCalled();
-      expect(sentMessages).toContainEqual({ messageProcessedId: 123 });
+
+      const processedMsg = sentMessages.find((m) => m.messageProcessedId !== undefined);
+      expect(typeof processedMsg.messageProcessedId).toBe('string');
+      expect(processedMsg.messageProcessedId).toBe('123');
     });
 
     it('should reject invalid JSON payload', async () => {

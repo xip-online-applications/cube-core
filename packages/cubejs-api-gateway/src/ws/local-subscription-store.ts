@@ -2,16 +2,6 @@ interface LocalSubscriptionStoreOptions {
   heartBeatInterval?: number;
 }
 
-export type SubscriptionId = string | number;
-
-const normalizeSubscriptionId = (subscriptionId: SubscriptionId): string => {
-  if (typeof subscriptionId === 'number') {
-    return subscriptionId.toString();
-  }
-
-  return subscriptionId;
-};
-
 export type LocalSubscriptionStoreSubscription = {
   message: any,
   state: any,
@@ -43,49 +33,47 @@ const getCubeNames = (query) => {
 export class LocalSubscriptionStore {
   protected readonly connections: Map<string, LocalSubscriptionStoreConnection> = new Map();
 
-  protected readonly hearBeatInterval: number;
+  protected readonly heartBeatInterval: number;
 
   public constructor(options: LocalSubscriptionStoreOptions = {}) {
-    this.hearBeatInterval = options.heartBeatInterval || 60;
+    this.heartBeatInterval = options.heartBeatInterval || 60;
   }
 
-  public async getSubscription(connectionId: string, subscriptionId: SubscriptionId): Promise<LocalSubscriptionStoreSubscription | undefined> {
+  public async getSubscription(connectionId: string, subscriptionId: string): Promise<LocalSubscriptionStoreSubscription | undefined> {
+    // only get subscription, do not create connection if it doesn't exist
     const connection = this.getConnection(connectionId);
     if (!connection) {
       return undefined;
     }
 
-    const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
-    return connection.subscriptions.get(normalizedSubscriptionId);
+    return connection.subscriptions.get(subscriptionId);
   }
 
-  public async subscribe(connectionId: string, subscriptionId: SubscriptionId, subscription) {
-    const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
+  public async subscribe(connectionId: string, subscriptionId: string, subscription) {
     const connection = this.getConnectionOrCreate(connectionId);
-    connection.subscriptions.set(normalizedSubscriptionId, {
+    connection.subscriptions.set(subscriptionId, {
       ...subscription,
       cubes: getCubeNames(subscription.message?.params?.query),
       timestamp: new Date()
     });
   }
 
-  public async unsubscribe(connectionId: string, subscriptionId: SubscriptionId) {
+  public async unsubscribe(connectionId: string, subscriptionId: string) {
     const connection = this.getConnection(connectionId);
     if (!connection) {
       return;
     }
-    const normalizedSubscriptionId = normalizeSubscriptionId(subscriptionId);
 
-    if (connection.subscriptions.has(normalizedSubscriptionId)) {
-      connection.subscriptions.delete(normalizedSubscriptionId);
-    } else {
-      console.warn(`Trying to unsubscribe non-existing subscription ${typeof subscriptionId} ${subscriptionId} for connection ${connectionId}`);
+    if (!connection.subscriptions.has(subscriptionId)) {
+      return;
     }
+
+    connection.subscriptions.delete(subscriptionId);
   }
 
   public getAllSubscriptions() {
     const now = Date.now();
-    const staleThreshold = this.hearBeatInterval * 4 * 1000;
+    const staleThreshold = this.heartBeatInterval * 4 * 1000;
     const result: Array<{ connectionId: string } & LocalSubscriptionStoreSubscription> = [];
 
     for (const [connectionId, connection] of this.connections) {

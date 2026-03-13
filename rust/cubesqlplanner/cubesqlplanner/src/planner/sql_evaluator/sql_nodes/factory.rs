@@ -1,12 +1,12 @@
 use super::{
     AutoPrefixSqlNode, CaseSqlNode, EvaluateSqlNode, FinalMeasureSqlNode,
-    FinalPreAggregationMeasureSqlNode, GeoDimensionSqlNode, MeasureFilterSqlNode,
-    MultiStageRankNode, MultiStageWindowNode, OriginalSqlPreAggregationSqlNode,
-    RenderReferencesSqlNode, RenderReferencesType, RollingWindowNode, RootSqlNode, SqlNode,
-    TimeDimensionNode, TimeShiftSqlNode, UngroupedMeasureSqlNode,
-    UngroupedQueryFinalMeasureSqlNode,
+    FinalPreAggregationMeasureSqlNode, GeoDimensionSqlNode, MaskedSqlNode, MeasureFilterSqlNode,
+    MultiStageRankNode, MultiStageWindowNode, RenderReferencesSqlNode, RenderReferencesType,
+    RollingWindowNode, RootSqlNode, SqlNode, TimeDimensionNode, TimeShiftSqlNode,
+    UngroupedMeasureSqlNode, UngroupedQueryFinalMeasureSqlNode,
 };
 use crate::planner::planners::multi_stage::TimeShiftState;
+use crate::planner::sql_evaluator::cube_ref_evaluator::CubeRefEvaluator;
 use crate::planner::sql_evaluator::sql_nodes::calendar_time_shift::CalendarTimeShiftSqlNode;
 use crate::planner::sql_evaluator::sql_nodes::RenderReferences;
 use crate::planner::sql_evaluator::symbols::CalendarDimensionTimeShift;
@@ -143,8 +143,15 @@ impl SqlNodesFactory {
         self.cube_name_references.insert(key, value);
     }
 
+    pub fn cube_ref_evaluator(&self) -> CubeRefEvaluator {
+        CubeRefEvaluator::new(
+            self.cube_name_references.clone(),
+            self.original_sql_pre_aggregations.clone(),
+        )
+    }
+
     pub fn default_node_processor(&self) -> Rc<dyn SqlNode> {
-        let evaluate_sql_processor = EvaluateSqlNode::new();
+        let evaluate_sql_processor = MaskedSqlNode::new(EvaluateSqlNode::new());
         let auto_prefix_processor = AutoPrefixSqlNode::new(
             evaluate_sql_processor.clone(),
             self.cube_name_references.clone(),
@@ -155,6 +162,13 @@ impl SqlNodesFactory {
 
         let measure_processor = self.add_ungrouped_measure_reference_if_needed(measure_processor);
         let measure_processor = self.final_measure_node_processor(measure_processor);
+        // Wrap the entire measure chain with MaskedSqlNode so masked measures
+        // are intercepted before aggregation/ungrouped wrapping.
+        let measure_processor = if self.ungrouped || self.ungrouped_measure {
+            MaskedSqlNode::new_ungrouped(measure_processor)
+        } else {
+            MaskedSqlNode::new(measure_processor)
+        };
         let measure_processor = self
             .add_multi_stage_window_if_needed(measure_processor, measure_filter_processor.clone());
         let measure_processor = self.add_multi_stage_rank_if_needed(measure_processor);
@@ -173,22 +187,9 @@ impl SqlNodesFactory {
             self.dimension_processor(evaluate_sql_processor.clone()),
             self.time_dimension_processor(evaluate_sql_processor.clone()),
             measure_processor.clone(),
-            auto_prefix_processor.clone(),
-            self.cube_table_processor(evaluate_sql_processor.clone()),
             default_processor,
         );
         RenderReferencesSqlNode::new(root_node, self.render_references.clone())
-    }
-
-    fn cube_table_processor(&self, default: Rc<dyn SqlNode>) -> Rc<dyn SqlNode> {
-        if !self.original_sql_pre_aggregations.is_empty() {
-            OriginalSqlPreAggregationSqlNode::new(
-                default,
-                self.original_sql_pre_aggregations.clone(),
-            )
-        } else {
-            default
-        }
     }
     fn add_ungrouped_measure_reference_if_needed(
         &self,

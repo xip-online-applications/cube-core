@@ -249,10 +249,17 @@ impl CacheStore for LazyRocksCacheStore {
         status_filter: Option<QueueItemStatus>,
         priority_sort: bool,
         with_payload: bool,
+        caller_process_id: Option<String>,
     ) -> Result<Vec<QueueListItem>, CubeError> {
         self.init()
             .await?
-            .queue_list(prefix, status_filter, priority_sort, with_payload)
+            .queue_list(
+                prefix,
+                status_filter,
+                priority_sort,
+                with_payload,
+                caller_process_id,
+            )
             .await
     }
 
@@ -272,10 +279,11 @@ impl CacheStore for LazyRocksCacheStore {
         &self,
         path: String,
         allow_concurrency: u32,
+        caller_process_id: Option<String>,
     ) -> Result<QueueRetrieveResponse, CubeError> {
         self.init()
             .await?
-            .queue_retrieve_by_path(path, allow_concurrency)
+            .queue_retrieve_by_path(path, allow_concurrency, caller_process_id)
             .await
     }
 

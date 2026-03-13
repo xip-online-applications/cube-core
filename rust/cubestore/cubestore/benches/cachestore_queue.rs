@@ -61,6 +61,8 @@ async fn do_insert(
             value: "a".repeat(size_kb * 1024), // size in bytes
             priority: 0,
             orphaned: None,
+            process_id: None,
+            exclusive: false,
         });
 
         let res = fut.await;
@@ -108,6 +110,7 @@ async fn do_list(
             status_filter.clone(),
             true,
             false,
+            None,
         );
 
         let res = fut.await;

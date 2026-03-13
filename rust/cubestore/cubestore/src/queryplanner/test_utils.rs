@@ -828,6 +828,7 @@ impl CacheStore for CacheStoreMock {
         _status_filter: Option<QueueItemStatus>,
         _priority_sort: bool,
         _with_payload: bool,
+        _caller_process_id: Option<String>,
     ) -> Result<Vec<QueueListItem>, CubeError> {
         panic!("CacheStore mock!")
     }
@@ -848,6 +849,7 @@ impl CacheStore for CacheStoreMock {
         &self,
         _path: String,
         _allow_concurrency: u32,
+        _caller_process_id: Option<String>,
     ) -> Result<QueueRetrieveResponse, CubeError> {
         panic!("CacheStore mock!")
     }

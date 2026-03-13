@@ -27,6 +27,21 @@ impl TestContext {
     }
 
     pub fn new_with_timezone(schema: MockSchema, timezone: Tz) -> Result<Self, CubeError> {
+        Self::new_with_options(schema, timezone, None)
+    }
+
+    pub fn new_with_masked_members(
+        schema: MockSchema,
+        masked_members: Vec<String>,
+    ) -> Result<Self, CubeError> {
+        Self::new_with_options(schema, Tz::UTC, Some(masked_members))
+    }
+
+    fn new_with_options(
+        schema: MockSchema,
+        timezone: Tz,
+        masked_members: Option<Vec<String>>,
+    ) -> Result<Self, CubeError> {
         let base_tools = schema.create_base_tools()?;
         let join_graph = Rc::new(schema.create_join_graph()?);
         let evaluator = schema.create_evaluator();
@@ -40,6 +55,7 @@ impl TestContext {
             join_graph,
             Some(timezone.to_string()),
             false, // export_annotated_sql
+            masked_members,
         )?;
 
         Ok(Self {
@@ -51,6 +67,13 @@ impl TestContext {
     #[allow(dead_code)]
     pub fn query_tools(&self) -> &Rc<QueryTools> {
         &self.query_tools
+    }
+
+    #[allow(dead_code)]
+    pub fn security_context(
+        &self,
+    ) -> &Rc<dyn crate::cube_bridge::security_context::SecurityContext> {
+        &self.security_context
     }
 
     #[allow(dead_code)]
@@ -87,18 +110,11 @@ impl TestContext {
             .query_tools
             .cube_evaluator()
             .segment_by_path(path.to_string())?;
-        let expression = self
-            .query_tools
-            .evaluator_compiler()
-            .borrow_mut()
-            .compile_sql_call(&cube_name, definition.sql()?)?;
-        BaseSegment::try_new(
-            expression,
-            cube_name,
-            name,
-            Some(path.to_string()),
-            self.query_tools.clone(),
-        )
+        let mut compiler = self.query_tools.evaluator_compiler().borrow_mut();
+        let expression = compiler.compile_sql_call(&cube_name, definition.sql()?)?;
+        let cube_symbol = compiler.add_cube_table_evaluator(cube_name.clone(), vec![])?;
+        drop(compiler);
+        BaseSegment::try_new(expression, cube_symbol, name, Some(path.to_string()))
     }
 
     #[allow(dead_code)]
@@ -126,11 +142,13 @@ impl TestContext {
     }
 
     pub fn evaluate_symbol(&self, symbol: &Rc<MemberSymbol>) -> Result<String, CubeError> {
-        let visitor = SqlEvaluatorVisitor::new(self.query_tools.clone(), None);
+        let nodes_factory = SqlNodesFactory::default();
+        let cube_ref_evaluator = Rc::new(nodes_factory.cube_ref_evaluator());
+        let visitor = SqlEvaluatorVisitor::new(self.query_tools.clone(), cube_ref_evaluator, None);
         let base_tools = self.query_tools.base_tools();
         let driver_tools = base_tools.driver_tools(false)?;
         let templates = PlanSqlTemplates::try_new(driver_tools, false)?;
-        let node_processor = SqlNodesFactory::default().default_node_processor();
+        let node_processor = nodes_factory.default_node_processor();
 
         visitor.apply(symbol, node_processor, &templates)
     }
@@ -261,6 +279,18 @@ impl TestContext {
         let (sql, _) = self.build_sql_with_used_pre_aggregations(query)?;
         Ok(sql)
     }
+
+    #[allow(dead_code)]
+    pub fn build_sql_from_options(
+        &self,
+        options: Rc<dyn BaseQueryOptions>,
+    ) -> Result<String, CubeError> {
+        let request = QueryProperties::try_new(self.query_tools.clone(), options)?;
+        let planner = TopLevelPlanner::new(request, self.query_tools.clone(), false);
+        let (sql, _) = planner.plan()?;
+        Ok(sql)
+    }
+
     pub fn build_sql_with_used_pre_aggregations(
         &self,
         query: &str,

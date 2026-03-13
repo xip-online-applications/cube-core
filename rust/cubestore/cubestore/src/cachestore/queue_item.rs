@@ -86,6 +86,10 @@ pub struct QueueItem {
     orphaned: Option<DateTime<Utc>>,
     #[serde(with = "ts_seconds")]
     expire: DateTime<Utc>,
+    #[serde(default)]
+    pub(crate) process_id: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) exclusive: bool,
 }
 
 impl RocksEntity for QueueItem {
@@ -134,6 +138,8 @@ impl QueueItem {
         status: QueueItemStatus,
         priority: i64,
         orphaned: Option<u32>,
+        process_id: Option<String>,
+        exclusive: bool,
     ) -> Self {
         let (prefix, key) = QueueItem::parse_path(path);
         let created = Utc::now();
@@ -156,6 +162,8 @@ impl QueueItem {
                 created.clone() + Duration::hours(4)
             },
             created,
+            process_id,
+            exclusive,
         }
     }
 
@@ -213,6 +221,28 @@ impl QueueItem {
         &self.expire
     }
 
+    pub fn get_process_id(&self) -> &Option<String> {
+        &self.process_id
+    }
+
+    pub fn get_exclusive(&self) -> bool {
+        self.exclusive
+    }
+
+    /// Returns whether this item should be visible to the given caller process.
+    /// Exclusive items with a process_id are only visible to the owning process.
+    pub fn is_visible_for(&self, caller_process_id: &Option<String>) -> bool {
+        if self.exclusive {
+            match (&self.process_id, caller_process_id) {
+                (Some(item_pid), Some(caller_pid)) => item_pid == caller_pid,
+                (Some(_), None) => false,
+                _ => true,
+            }
+        } else {
+            true
+        }
+    }
+
     pub fn status_default() -> QueueItemStatus {
         QueueItemStatus::Pending
     }
@@ -260,6 +290,10 @@ pub enum QueueRetrieveResponse {
         pending: u64,
         active: Vec<String>,
     },
+    ExclusiveAccessFailed {
+        pending: u64,
+        active: Vec<String>,
+    },
 }
 
 impl QueueRetrieveResponse {
@@ -288,7 +322,8 @@ impl QueueRetrieveResponse {
             ])],
             QueueRetrieveResponse::LockFailed { pending, active }
             | QueueRetrieveResponse::NotEnoughConcurrency { pending, active }
-            | QueueRetrieveResponse::NotFound { pending, active } => {
+            | QueueRetrieveResponse::NotFound { pending, active }
+            | QueueRetrieveResponse::ExclusiveAccessFailed { pending, active } => {
                 if extended {
                     vec![Row::new(vec![
                         TableValue::Null,
@@ -441,12 +476,54 @@ mod tests {
 
     #[test]
     fn test_queue_item_sort() -> Result<(), CubeError> {
-        let priority0_1 = QueueItem::new("1".to_string(), QueueItemStatus::Active, 0, None);
-        let mut priority0_2 = QueueItem::new("2".to_string(), QueueItemStatus::Active, 0, None);
-        let mut priority0_3 = QueueItem::new("3".to_string(), QueueItemStatus::Active, 0, None);
-        let mut priority10_4 = QueueItem::new("4".to_string(), QueueItemStatus::Active, 10, None);
-        let mut priority0_5 = QueueItem::new("5".to_string(), QueueItemStatus::Active, 0, None);
-        let mut priority_n5_6 = QueueItem::new("6".to_string(), QueueItemStatus::Active, -5, None);
+        let priority0_1 = QueueItem::new(
+            "1".to_string(),
+            QueueItemStatus::Active,
+            0,
+            None,
+            None,
+            false,
+        );
+        let mut priority0_2 = QueueItem::new(
+            "2".to_string(),
+            QueueItemStatus::Active,
+            0,
+            None,
+            None,
+            false,
+        );
+        let mut priority0_3 = QueueItem::new(
+            "3".to_string(),
+            QueueItemStatus::Active,
+            0,
+            None,
+            None,
+            false,
+        );
+        let mut priority10_4 = QueueItem::new(
+            "4".to_string(),
+            QueueItemStatus::Active,
+            10,
+            None,
+            None,
+            false,
+        );
+        let mut priority0_5 = QueueItem::new(
+            "5".to_string(),
+            QueueItemStatus::Active,
+            0,
+            None,
+            None,
+            false,
+        );
+        let mut priority_n5_6 = QueueItem::new(
+            "6".to_string(),
+            QueueItemStatus::Active,
+            -5,
+            None,
+            None,
+            false,
+        );
 
         // Force timestamps to be distinct (on systems that are too fast or have low clock resolution)
         for (i, item) in (1..).zip([
@@ -506,5 +583,34 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_is_visible_for() {
+        // Non-exclusive item
+        let non_exclusive = QueueItem::new(
+            "prefix:key".to_string(),
+            QueueItemStatus::Pending,
+            0,
+            None,
+            Some("pid-1".to_string()),
+            false,
+        );
+        assert!(non_exclusive.is_visible_for(&None));
+        assert!(non_exclusive.is_visible_for(&Some("pid-1".to_string())));
+        assert!(non_exclusive.is_visible_for(&Some("pid-other".to_string())));
+
+        // Exclusive item with process_id
+        let exclusive = QueueItem::new(
+            "prefix:key".to_string(),
+            QueueItemStatus::Pending,
+            0,
+            None,
+            Some("pid-1".to_string()),
+            true,
+        );
+        assert!(exclusive.is_visible_for(&Some("pid-1".to_string())));
+        assert!(!exclusive.is_visible_for(&Some("pid-other".to_string())));
+        assert!(!exclusive.is_visible_for(&None));
     }
 }
