@@ -7,6 +7,7 @@ use crate::logical_plan::PreAggregationJoin;
 use crate::logical_plan::PreAggregationJoinItem;
 use crate::logical_plan::PreAggregationTable;
 use crate::logical_plan::PreAggregationUnion;
+use crate::planner::join_hints::JoinHints;
 use crate::planner::planners::JoinPlanner;
 use crate::planner::planners::ResolvedJoinItem;
 use crate::planner::query_tools::QueryTools;
@@ -342,10 +343,12 @@ impl PreAggregationsCompiler {
             .cloned()
             .chain(dimensions.iter().cloned())
             .collect_vec();
-        let pre_aggr_join_hints = collect_cube_names_from_symbols(&all_symbols)?
-            .into_iter()
-            .map(|v| JoinHintItem::Single(v))
-            .collect_vec();
+        let pre_aggr_join_hints = JoinHints::from_items(
+            collect_cube_names_from_symbols(&all_symbols)?
+                .into_iter()
+                .map(|v| JoinHintItem::Single(v))
+                .collect_vec(),
+        );
 
         let join_planner = JoinPlanner::new(self.query_tools.clone());
         let pre_aggrs_for_join = rollups
@@ -364,10 +367,12 @@ impl PreAggregationsCompiler {
                 .cloned()
                 .chain(join_pre_aggr.dimensions.iter().cloned())
                 .collect_vec();
-            let join_pre_aggr_join_hints = collect_cube_names_from_symbols(&all_symbols)?
-                .into_iter()
-                .map(|v| JoinHintItem::Single(v))
-                .collect_vec();
+            let join_pre_aggr_join_hints = JoinHints::from_items(
+                collect_cube_names_from_symbols(&all_symbols)?
+                    .into_iter()
+                    .map(|v| JoinHintItem::Single(v))
+                    .collect_vec(),
+            );
             existing_joins.append(
                 &mut join_planner.resolve_join_members_by_hints(&join_pre_aggr_join_hints)?,
             );
@@ -510,7 +515,7 @@ impl PreAggregationsCompiler {
                 "Pre-aggregation time dimension must be a dimension"
             ))
         })?;
-        if dimension.dimension_type() != "time" {
+        if !dimension.is_time() {
             return Err(CubeError::user(format!(
                 "Pre-aggregation time dimension must be a dimension"
             )));
