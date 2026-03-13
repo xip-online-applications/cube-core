@@ -2822,20 +2822,6 @@
   resolved "https://registry.yarnpkg.com/@cubejs-backend/dotenv/-/dotenv-9.0.2.tgz#c3679091b702f0fd38de120c5a63943fcdc0dcbf"
   integrity sha512-yC1juhXEjM7K97KfXubDm7WGipd4Lpxe+AT8XeTRE9meRULrKlw0wtE2E8AQkGOfTBn+P1SCkePQ/BzIbOh1VA==
 
-"@cubejs-backend/event-emitter@file:packages/cubejs-event-emitter":
-  version "1.6.17"
-  dependencies:
-    "@cubejs-backend/dotenv" "^9.0.2"
-    "@cubejs-backend/shared" "1.6.17"
-    chokidar "^3.5.1"
-    env-var "^6.3.0"
-    fs-extra "^9.1.0"
-    jsonwebtoken "^8.5.1"
-    redis "^4.6.14"
-    request "^2.88.2"
-    request-promise "^4.2.5"
-    rxjs "^7.8.1"
-
 "@cubejs-backend/jdbc@^0.8.1":
   version "0.8.1"
   resolved "https://registry.yarnpkg.com/@cubejs-backend/jdbc/-/jdbc-0.8.1.tgz#32e21fcbf35f91028864396503620c83c2779261"
