@@ -10,6 +10,7 @@ import {
   QueryOrchestratorOptions,
 } from '@cubejs-backend/query-orchestrator';
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
+import { Tracer } from '@cubejs-backend/tracer';
 import { DatabaseType, RequestContext } from './types';
 
 export interface OrchestratorApiOptions extends QueryOrchestratorOptions {
@@ -31,6 +32,7 @@ export class OrchestratorApi {
     protected readonly eventEmitter: EventEmitterInterface,
     protected readonly options: OrchestratorApiOptions
   ) {
+    Tracer.init();
     this.continueWaitTimeout = this.options.continueWaitTimeout || 5;
 
     this.orchestrator = new QueryOrchestrator(
@@ -75,6 +77,8 @@ export class OrchestratorApi {
   public async executeQuery(query: QueryBody) {
     const queryForLog = query.query?.replace(/\s+/g, ' ');
     const startQueryTime = (new Date()).getTime();
+    const securityContext = query.requestContext?.securityContext || query.context?.securityContext;
+    const tenantIdentifier = securityContext?.tenantId || 'unknown';
 
     try {
       this.logger('Query started', {
@@ -148,6 +152,10 @@ export class OrchestratorApi {
             warning: 'Query is too slow to be renewed during the ' +
               'user request and was served from the cache. Please ' +
               'consider using low latency pre-aggregations.'
+          });
+
+          Tracer.init().get().increment('slow_query', 1, {
+            tenant: tenantIdentifier,
           });
 
           return {

@@ -1,0 +1,42 @@
+{
+  "name": "@cubejs-backend/tracer",
+  "description": "Cube.js tracer package",
+  "author": "Cube Dev, Inc.",
+  "version": "1.6.22",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cube-js/cube.git",
+    "directory": "packages/cubejs-tracer"
+  },
+  "engines": {
+    "node": "^14.0.0 || ^16.0.0 || >=17.0.0"
+  },
+  "main": "dist/src/index.js",
+  "typings": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "rm -rf dist && npm run tsc",
+    "tsc": "tsc",
+    "watch": "tsc -w",
+    "lint": "eslint src/* --ext .ts",
+    "lint:fix": "eslint --fix src/* --ext .ts"
+  },
+  "files": [
+    "README.md",
+    "dist/src/*"
+  ],
+  "dependencies": {
+    "hot-shots": "^14.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@cubejs-backend/linter": "1.6.22",
+    "typescript": "~5.2.2"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "eslintConfig": {
+    "extends": "../cubejs-linter"
+  }
+}

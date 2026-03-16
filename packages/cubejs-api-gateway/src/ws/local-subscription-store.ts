@@ -1,3 +1,5 @@
+import { Tracer } from '@cubejs-backend/tracer';
+
 interface LocalSubscriptionStoreOptions {
   heartBeatInterval?: number;
 }
@@ -30,13 +32,31 @@ const getCubeNames = (query) => {
   return Array.from(new Set(allColumns));
 };
 
+const getNumberOfSubscriptionsPerTenant = (connections: Map<string, LocalSubscriptionStoreConnection>): Record<string, number> => {
+  const result: Record<string, number> = {};
+
+  for (const [, connection] of connections) {
+    const tenantId = connection.authContext?.securityContext?.tenantId;
+    if (tenantId) {
+      result[tenantId] = (result[tenantId] || 0) + connection.subscriptions.size;
+    }
+  }
+
+  return result;
+};
+
 export class LocalSubscriptionStore {
   protected readonly connections: Map<string, LocalSubscriptionStoreConnection> = new Map();
 
   protected readonly heartBeatInterval: number;
 
   public constructor(options: LocalSubscriptionStoreOptions = {}) {
+    Tracer.init();
     this.heartBeatInterval = options.heartBeatInterval || 60;
+
+    setInterval(() => {
+      this.logConnections();
+    }, 60 * 1000);
   }
 
   public async getSubscription(connectionId: string, subscriptionId: string): Promise<LocalSubscriptionStoreSubscription | undefined> {
@@ -153,5 +173,16 @@ export class LocalSubscriptionStore {
 
   public clear() {
     this.connections.clear();
+  }
+
+  private logConnections() {
+    const subsPerTenant = getNumberOfSubscriptionsPerTenant(this.connections);
+    const tenants = Object.keys(subsPerTenant);
+    
+    tenants.forEach(tenantIdentifier => {
+      Tracer.init().get().gauge('subscriptions', subsPerTenant[tenantIdentifier], {
+        tenant: tenantIdentifier,
+      });
+    });
   }
 }

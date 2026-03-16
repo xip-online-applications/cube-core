@@ -14,6 +14,9 @@
       "path": "packages/cubejs-event-emitter"
     },
     {
+      "path": "packages/cubejs-tracer"
+    },
+    {
       "path": "packages/cubejs-templates"
     },
     {

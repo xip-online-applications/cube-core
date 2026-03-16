@@ -40,6 +40,7 @@
     "@cubejs-backend/query-orchestrator": "1.6.22",
     "@cubejs-backend/schema-compiler": "1.6.22",
     "@cubejs-backend/shared": "1.6.22",
+    "@cubejs-backend/tracer": "1.6.22",
     "@cubejs-backend/templates": "1.6.22",
     "codesandbox-import-utils": "^2.1.12",
     "cross-spawn": "^7.0.1",
