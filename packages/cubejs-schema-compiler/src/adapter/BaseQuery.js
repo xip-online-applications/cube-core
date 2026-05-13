@@ -3924,20 +3924,28 @@ export class BaseQuery {
     );
 
     if (!timeDimension) {
-      throw new UserError(
+      console.warn(
         `SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): no matching time dimension found in the query. ` +
         `Make sure '${memberPath}' is included in timeDimensions of your query.`
       );
+      return granularityToRollupSeconds();
     }
 
-    if (!timeDimension.granularityObj) {
-      throw new UserError(
-        `SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): the time dimension '${memberPath}' has no granularity set. ` +
-        'A granularity must be specified in the query\'s timeDimensions.'
+    const granularity = timeDimension.granularityObj
+      ? timeDimension.granularityObj.resolvedGranularity()
+      : timeDimension.dateRangeGranularity();
+
+    if (!granularity) {
+      console.error(
+        `SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): unable to determine granularity. ` +
+        'Either set a granularity or a dateRange on the time dimension.'
       );
+      return granularityToRollupSeconds();
     }
 
-    return granularityToRollupSeconds(timeDimension.granularityObj.resolvedGranularity());
+    console.log(`SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): '${granularity}' = '${granularityToRollupSeconds(granularity)}'`)
+
+    return granularityToRollupSeconds(granularity);
   }
 
   /**
