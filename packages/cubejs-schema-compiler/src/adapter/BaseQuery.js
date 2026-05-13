@@ -19,7 +19,7 @@ import {
   MAX_SOURCE_ROW_LIMIT,
   QueryAlias,
   getEnv,
-  granularityToSeconds,
+  granularityToRollupSeconds,
   localTimestampToUtc,
   timeSeries as timeSeriesBase,
   timeSeriesFromCustomInterval,
@@ -3937,7 +3937,7 @@ export class BaseQuery {
       );
     }
 
-    return granularityToSeconds(timeDimension.granularityObj.resolvedGranularity());
+    return granularityToRollupSeconds(timeDimension.granularityObj.resolvedGranularity());
   }
 
   /**

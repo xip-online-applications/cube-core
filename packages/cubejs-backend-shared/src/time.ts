@@ -92,7 +92,7 @@ export const TIME_SERIES: Record<string, (range: DateRange, timestampPrecision: 
     .map(d => [d.format(`YYYY-MM-DDT00:00:00.${'0'.repeat(digits)}`), d.endOf('quarter').format(`YYYY-MM-DDT23:59:59.${'9'.repeat(digits)}`)]),
 };
 
-const GRANULARITY_TO_SECONDS: Record<string, number> = {
+const GRANULARITY_TO_ROLLUP_SECONDS: Record<string, number> = {
   second: 10,
   minute: 10,
   hour: 60,
@@ -107,8 +107,8 @@ const GRANULARITY_TO_SECONDS: Record<string, number> = {
  * Converts a granularity name (e.g. 'second', 'hour', 'day') to the number of seconds.
  * For variable-length units (month, quarter, year), approximate fixed values are used.
  */
-export function granularityToSeconds(granularity: string): number {
-  const seconds = GRANULARITY_TO_SECONDS[granularity];
+export function granularityToRollupSeconds(granularity: string): number {
+  const seconds = GRANULARITY_TO_ROLLUP_SECONDS[granularity];
   if (seconds === undefined) {
     return 60;
   }
