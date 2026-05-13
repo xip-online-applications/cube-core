@@ -4958,7 +4958,7 @@ export class BaseQuery {
       filterGroup: () => '1 = 1',
       sqlUtils: {
         convertTz: (field) => field,
-        convertToGranularityInSeconds: (_field) => 1,
+        convertToGranularityInSeconds: (_field) => 60,
       },
       securityContext: CubeSymbols.contextSymbolsProxyFrom({}, allocateParam),
     };
