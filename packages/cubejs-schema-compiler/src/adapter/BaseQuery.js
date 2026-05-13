@@ -4970,7 +4970,8 @@ export class BaseQuery {
 
   sqlUtilsForRust() {
     return {
-      convertTz: this.convertTz.bind(this)
+      convertTz: this.convertTz.bind(this),
+      convertToGranularityInSeconds: this.convertToGranularityInSeconds.bind(this)
     };
   }
 
