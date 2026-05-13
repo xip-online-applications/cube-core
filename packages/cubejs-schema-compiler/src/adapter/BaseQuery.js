@@ -19,6 +19,7 @@ import {
   MAX_SOURCE_ROW_LIMIT,
   QueryAlias,
   getEnv,
+  granularityToSeconds,
   localTimestampToUtc,
   timeSeries as timeSeriesBase,
   timeSeriesFromCustomInterval,
@@ -3907,6 +3908,39 @@ export class BaseQuery {
   }
 
   /**
+   * @param {string} memberPath
+   * @return {number}
+   */
+  convertToGranularityInSeconds(memberPath) {
+    if (typeof memberPath !== 'string') {
+      throw new UserError(
+        'SQL_UTILS.convertToGranularityInSeconds() expects a string argument with the fully qualified time dimension path, ' +
+        "e.g. SQL_UTILS.convertToGranularityInSeconds('MyCube.createdAt')"
+      );
+    }
+
+    const timeDimension = this.timeDimensions.find(
+      td => td.dimension === memberPath || td.expressionPath() === memberPath
+    );
+
+    if (!timeDimension) {
+      throw new UserError(
+        `SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): no matching time dimension found in the query. ` +
+        `Make sure '${memberPath}' is included in timeDimensions of your query.`
+      );
+    }
+
+    if (!timeDimension.granularityObj) {
+      throw new UserError(
+        `SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): the time dimension '${memberPath}' has no granularity set. ` +
+        'A granularity must be specified in the query\'s timeDimensions.'
+      );
+    }
+
+    return granularityToSeconds(timeDimension.granularityObj.resolvedGranularity());
+  }
+
+  /**
    * @param {string} granularity
    * @param {string} dimension
    * @return {string}
@@ -4907,7 +4941,8 @@ export class BaseQuery {
         filterParams: this.filtersProxy(),
         filterGroup: this.filterGroupFunction(),
         sqlUtils: {
-          convertTz: this.convertTz.bind(this)
+          convertTz: this.convertTz.bind(this),
+          convertToGranularityInSeconds: this.convertToGranularityInSeconds.bind(this)
         }
       }, R.map(
         (symbols) => this.contextSymbolsProxy(symbols),
@@ -4923,6 +4958,7 @@ export class BaseQuery {
       filterGroup: () => '1 = 1',
       sqlUtils: {
         convertTz: (field) => field,
+        convertToGranularityInSeconds: (_field) => 1,
       },
       securityContext: CubeSymbols.contextSymbolsProxyFrom({}, allocateParam),
     };
