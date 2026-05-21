@@ -1,0 +1,11 @@
+/Users/heinz/Developer/cube-core/rust/cubesqlplanner/target/debug/deps/libsocket2-3a87d3ddce54e65a.rmeta: /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/lib.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockaddr.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/socket.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockref.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sys/unix.rs
+
+/Users/heinz/Developer/cube-core/rust/cubesqlplanner/target/debug/deps/libsocket2-3a87d3ddce54e65a.rlib: /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/lib.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockaddr.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/socket.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockref.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sys/unix.rs
+
+/Users/heinz/Developer/cube-core/rust/cubesqlplanner/target/debug/deps/socket2-3a87d3ddce54e65a.d: /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/lib.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockaddr.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/socket.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockref.rs /Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sys/unix.rs
+
+/Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/lib.rs:
+/Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockaddr.rs:
+/Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/socket.rs:
+/Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sockref.rs:
+/Users/heinz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.5.7/src/sys/unix.rs:

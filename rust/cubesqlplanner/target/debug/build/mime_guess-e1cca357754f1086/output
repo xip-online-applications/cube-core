@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/Users/heinz/Developer/cube-core/rust/cubesqlplanner/target/debug/build/mime_guess-e1cca357754f1086/out/mime_types_generated.rs
