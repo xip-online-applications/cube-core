@@ -72,7 +72,14 @@ COPY packages/cubejs-server-core/ packages/cubejs-server-core/
 #COPY packages/cubejs-jdbc-driver/ packages/cubejs-jdbc-driver/
 #COPY packages/cubejs-databricks-jdbc-driver/ packages/cubejs-databricks-jdbc-driver/
 COPY packages/cubejs-event-emitter/ packages/cubejs-event-emitter/
-COPY rust/ rust/
+
+# Backend Rust components
+COPY rust/cube/cubenativeutils/ rust/cube/cubenativeutils/
+COPY rust/cube/cubeshared/ rust/cube/cubeshared/
+COPY rust/cubeorchestrator/ rust/cubeorchestrator/
+COPY rust/cubesqlplanner/ rust/cubesqlplanner/
+COPY rust/cubestore/ rust/cubestore/
+COPY rust/cubesql/ rust/cubesql/
 
 # Skip
 # COPY packages/cubejs-testing/ packages/cubejs-testing/
