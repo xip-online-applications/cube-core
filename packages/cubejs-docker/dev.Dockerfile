@@ -112,8 +112,8 @@ FROM base AS build
 RUN yarn install
 
 # Backend
-COPY rust/cubenativeutils/ rust/cubenativeutils/
-COPY rust/cubeshared/ rust/cubeshared/
+COPY rust/cube/cubenativeutils/ rust/cube/cubenativeutils/
+COPY rust/cube/cubeshared/ rust/cube/cubeshared/
 COPY rust/cubeorchestrator/ rust/cubeorchestrator/
 COPY rust/cubesqlplanner/ rust/cubesqlplanner/
 COPY rust/cubestore/ rust/cubestore/
