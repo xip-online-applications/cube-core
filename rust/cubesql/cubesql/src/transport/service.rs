@@ -312,7 +312,7 @@ impl TransportService for HttpTransport {
 
         // TODO: support meta_fields for HTTP
         let request = TransportLoadRequest {
-            query: Some(query),
+            query: Some(Box::new(query)),
             query_type: Some("multi".to_string()),
             cache: cache_mode,
         };
@@ -424,6 +424,7 @@ impl SqlTemplates {
     pub fn select(
         &self,
         from: String,
+        joins: Vec<String>,
         projection: Vec<AliasedColumn>,
         group_by: Vec<AliasedColumn>,
         group_descs: Vec<Option<GroupingSetDesc>>,
@@ -463,6 +464,7 @@ impl SqlTemplates {
             "statements/select",
             context! {
                 from => from,
+                joins => joins,
                 select_concat => select_concat,
                 group_by => group_by_expr,
                 aggregate => aggregate,
@@ -912,7 +914,12 @@ impl SqlTemplates {
 
         let rendered_like = self.render_template(
             &format!("expressions/{}", expression_name),
-            context! { expr => expr, negated => negated, pattern => pattern },
+            context! {
+                expr => expr,
+                negated => negated,
+                pattern => pattern,
+                default_escape => escape_char.is_none(),
+            },
         )?;
 
         let Some(escape_char) = escape_char else {
@@ -987,5 +994,26 @@ impl SqlTemplates {
 
     pub fn inner_join(&self) -> Result<String, CubeError> {
         self.render_template("join_types/inner", context! {})
+    }
+
+    pub fn query_aliased(&self, query: &str, alias: &str) -> Result<String, CubeError> {
+        let bracketed_query = format!("({})", query);
+        let quoted_alias = self.quote_identifier(alias)?;
+        self.render_template(
+            "expressions/query_aliased",
+            context! { query => bracketed_query, quoted_alias => quoted_alias },
+        )
+    }
+
+    pub fn join(
+        &self,
+        join_type: &str,
+        source: &str,
+        condition: &str,
+    ) -> Result<String, CubeError> {
+        self.render_template(
+            "statements/join",
+            context! { join_type => join_type, source => source, condition => condition },
+        )
     }
 }
