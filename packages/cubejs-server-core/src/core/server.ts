@@ -17,6 +17,7 @@ import {
   getEnv,
   assertDataSource,
   getRealType,
+  hasPreAggregationsEnvVars,
   internalExceptions,
   track,
   FileRepository,
@@ -615,13 +616,23 @@ export class CubejsServerCore {
       /**
        * Driver factory function `DriverFactoryByDataSource`.
        */
-      async (dataSource = 'default') => {
-        if (driverPromise[dataSource]) {
-          return driverPromise[dataSource];
+      async (dataSource = 'default', preAggregations = false) => {
+        const factoryKey = preAggregations ? `${dataSource}@pre_agg` : dataSource;
+        if (driverPromise[factoryKey]) {
+          return driverPromise[factoryKey];
         }
 
-        // eslint-disable-next-line no-return-assign
-        return driverPromise[dataSource] = (async () => {
+        const hasSeparatePreAggEnv = hasPreAggregationsEnvVars(dataSource);
+        const usePreAgg = preAggregations && hasSeparatePreAggEnv && !this.optsHandler.isCustomDriverFactory();
+
+        if (preAggregations && hasSeparatePreAggEnv && this.optsHandler.isCustomDriverFactory()) {
+          this.logger('Pre-aggregation driver conflict', {
+            error: 'Both driverFactory and PRE_AGGREGATIONS env vars are defined. driverFactory will take precedence.',
+            dataSource,
+          });
+        }
+
+        driverPromise[factoryKey] = (async () => {
           let driver: BaseDriver | null = null;
 
           try {
@@ -629,6 +640,7 @@ export class CubejsServerCore {
               {
                 ...context,
                 dataSource,
+                preAggregations: usePreAgg || false,
               },
               orchestratorOptions,
             );
@@ -647,7 +659,11 @@ export class CubejsServerCore {
               `Unexpected return type, driverFactory must return driver (dataSource: "${dataSource}"), actual: ${getRealType(driver)}`
             );
           } catch (e) {
-            driverPromise[dataSource] = null;
+            driverPromise[factoryKey] = null;
+
+            if (!preAggregations && !hasSeparatePreAggEnv) {
+              driverPromise[`${dataSource}@pre_agg`] = null;
+            }
 
             if (driver) {
               await driver.release();
@@ -656,6 +672,13 @@ export class CubejsServerCore {
             throw e;
           }
         })();
+
+        // No separate pre-agg driver needed — share the same promise for both keys
+        if (!preAggregations && !hasSeparatePreAggEnv) {
+          driverPromise[`${dataSource}@pre_agg`] = driverPromise[factoryKey];
+        }
+
+        return driverPromise[factoryKey];
       },
       {
         externalDriverFactory: this.options.externalDriverFactory && (async () => {
@@ -885,6 +908,7 @@ export class CubejsServerCore {
           testConnectionTimeout: options?.testConnectionTimeout,
         };
       opts.dataSource = assertDataSource(context.dataSource);
+      opts.preAggregations = context.preAggregations || false;
       return CubejsServerCore.createDriver(type, opts);
     }
   }

@@ -156,6 +156,7 @@ type CacheEntry = {
   time: number;
   result: any;
   renewalKey: string;
+  requestId?: string;
 };
 
 export interface QueryCacheOptions {
@@ -325,6 +326,7 @@ export class QueryCache {
           requestId: queryBody.requestId,
           dataSource: queryBody.dataSource,
           persistent: queryBody.persistent,
+          skipRefreshKeyWaitForRenew: true,
         }
       );
     }
@@ -433,6 +435,12 @@ export class QueryCache {
     // @ts-ignore
     key.persistent = queryBody.persistent;
     return key;
+  }
+
+  public static extractRequestUUID(requestId: string): string {
+    const idx = requestId.lastIndexOf('-span-');
+
+    return idx !== -1 ? requestId.substring(0, idx) : requestId;
   }
 
   protected static replaceAll(replaceThis, withThis, inThis) {
@@ -962,6 +970,7 @@ export class QueryCache {
           time: new Date().getTime(),
           result: res,
           renewalKey,
+          requestId: options.requestId,
         };
         return this.cacheDriver
           .set(redisKey, result, expiration)
@@ -1068,14 +1077,24 @@ export class QueryCache {
         primaryQuery,
         renewCycle,
       });
-      if (
-        renewalKey &&
-        (!renewalThreshold ||
-          !parsedResult.time ||
-          renewedAgo > renewalThreshold * 1000 ||
-          parsedResult.renewalKey !== renewalKey)
-      ) {
-        // RENE CHECK
+
+      const isExpired = !renewalThreshold || !parsedResult.time || renewedAgo > renewalThreshold * 1000;
+      const isKeyMismatch = renewalKey && parsedResult.renewalKey !== renewalKey;
+      const isSameRequest = options.requestId && parsedResult.requestId &&
+        QueryCache.extractRequestUUID(parsedResult.requestId) === QueryCache.extractRequestUUID(options.requestId);
+
+      // Continue-wait cycle: result was produced by our request,
+      // refreshKey changed during execution — return cached, refresh in background.
+      // Skip for renewCycle — it must always fetch fresh data to keep cache up-to-date.
+      if (isSameRequest && !renewCycle && (isExpired || isKeyMismatch)) {
+        this.logger('Same request cache hit (background refresh)', { cacheKey, renewalThreshold, requestId: options.requestId, spanId, primaryQuery, renewCycle });
+        fetchNew().catch(e => {
+          if (!(e instanceof ContinueWaitError)) {
+            this.logger('Error renewing', { cacheKey, error: e.stack || e, requestId: options.requestId, spanId, primaryQuery, renewCycle });
+          }
+        });
+      } else if (renewalKey && (isExpired || isKeyMismatch)) {
+        // Cache expired or refreshKey changed — need to refresh
         if (options.waitForRenew) {
           this.logger('Waiting for renew', {
             cacheKey,
@@ -1123,17 +1142,9 @@ export class QueryCache {
             });
         }
       }
-      this.logger('Using cache for', {
-        cacheKey,
-        requestId: options.requestId,
-        spanId,
-        primaryQuery,
-        renewCycle,
-      });
-      if (
-        options.useInMemory &&
-        renewedAgo + inMemoryCacheDisablePeriod <= renewalThreshold * 1000
-      ) {
+
+      this.logger('Using cache for', { cacheKey, requestId: options.requestId, spanId, primaryQuery, renewCycle });
+      if (options.useInMemory && renewedAgo + inMemoryCacheDisablePeriod <= renewalThreshold * 1000) {
         this.memoryCache.set(redisKey, parsedResult);
       }
       return parsedResult.result;

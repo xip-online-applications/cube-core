@@ -91,6 +91,7 @@ export interface RequestContext {
 
 export interface DriverContext extends RequestContext {
   dataSource: string;
+  preAggregations?: boolean;
 }
 
 export interface DbTypeInternalContext {
@@ -158,6 +159,7 @@ export type ScheduledRefreshContextsFn = () => Promise<UserBackgroundContext[]>;
 // internal
 export type DriverOptions = {
   dataSource?: string,
+  preAggregations?: boolean,
   maxPoolSize?: number,
   testConnectionTimeout?: number,
 };
