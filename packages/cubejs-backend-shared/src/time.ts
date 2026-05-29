@@ -95,8 +95,11 @@ export const TIME_SERIES: Record<string, (range: DateRange, timestampPrecision: 
 const GRANULARITY_TO_ROLLUP_SECONDS: Record<string, number> = {
   second: 10,
   minute: 60,
-  hour: 300,
-  day: 3600,
+  minutes_5: 300,
+  minutes_15: 300,
+  minutes_30: 300,
+  hour: 3600,
+  day: 14400,
   week: 14400,
   month: 14400,
   quarter: 14400,
