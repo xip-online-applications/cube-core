@@ -1,7 +1,9 @@
+import { DefaultEventEmitter } from '@cubejs-backend/event-emitter';
 import { ApiGateway } from '../src';
 import { compilerApi, AdapterApiMock, DataSourceStorageMock } from './mocks';
 
 const logger = (type: any, message: any) => console.log({ type, ...message });
+const eventEmitter = new DefaultEventEmitter();
 
 const LAST_REFRESH_TIME = new Date('2024-01-01T00:00:00.000Z');
 
@@ -41,7 +43,7 @@ class FreshnessAdapterApiMock extends AdapterApiMock {
 }
 
 function createGateway(adapterApi: any) {
-  return new ApiGateway('secret', compilerApi, async () => adapterApi, logger, {
+  return new ApiGateway('secret', compilerApi, async () => adapterApi, logger, eventEmitter, {
     standalone: true,
     dataSourceStorage: new DataSourceStorageMock(),
     basePath: '/cubejs-api',
