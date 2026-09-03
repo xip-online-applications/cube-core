@@ -94,7 +94,7 @@ ${granularity}
       const query = newQuery(compilers, { measures: ['sales.total_amount'] });
 
       expect(query.granularityHierarchies()['fiscal_calendar.date.fortnight'])
-        .toEqual(['fortnight', 'day', 'hour', 'minute', 'second']);
+        .toEqual(['fortnight', 'day', 'hour', 'minutes_30', 'minutes_15', 'minutes_5', 'minute', 'second']);
     });
   });
 
