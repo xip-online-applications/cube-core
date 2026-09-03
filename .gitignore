@@ -21,6 +21,12 @@ tsconfig.tsbuildinfo
 .tool-versions
 testings/
 rust/cubesql/profile.json
+# Rust build artifacts accidentally committed at these top-level paths in the past.
+# Real Tesseract/orchestrator source lives under rust/cube/cubesqlplanner and
+# rust/cube/cubeorchestrator, matching upstream's layout — these two top-level
+# paths should only ever contain local `cargo build` output.
+/rust/cubesqlplanner/
+/rust/cubeorchestrator/
 .cubestore
 .env
 .vimspector.json
