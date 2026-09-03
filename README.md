@@ -1,10 +1,9 @@
-![]()
 <p align="center">
   <a href="https://cube.dev?ref=github-readme"><img src="https://raw.githubusercontent.com/cube-js/cube/master/docs/content/cube-core-logo.png" alt="Cube Core — Open-Source Semantic Layer" width="300px"></a>
 </p>
 <br/>
 
-[Website](https://cube.dev?ref=github-readme) • [Docs](https://cube.dev/docs?ref=github-readme) • [Examples](https://cube.dev/docs/examples?ref=github-readme) • [Blog](https://cube.dev/blog?ref=github-readme) • [Slack](https://slack.cube.dev?ref=github-readme) • [X](https://twitter.com/the_cube_dev)
+[Website](https://cube.dev?ref=github-readme) • [Docs](https://docs.cube.dev?ref=github-readme) • [Examples](https://docs.cube.dev/recipes?ref=github-readme) • [Blog](https://cube.dev/blog?ref=github-readme) • [Slack](https://slack.cube.dev?ref=github-readme) • [X](https://twitter.com/the_cube_dev)
 
 [![npm version](https://badge.fury.io/js/%40cubejs-backend%2Fserver.svg)](https://badge.fury.io/js/%40cubejs-backend%2Fserver)
 [![GitHub Actions](https://github.com/cube-js/cube/workflows/Build/badge.svg)](https://github.com/cube-js/cube/actions?query=workflow%3ABuild+branch%3Amaster)
@@ -15,13 +14,14 @@ __Cube Core is the open-source semantic layer.__ Define metrics, dimensions, joi
 Cube Core works with all SQL data sources, including cloud data warehouses like Snowflake, Databricks, and BigQuery; query engines like Presto and Amazon Athena; and application databases like Postgres. It has a built-in relational caching engine to provide sub-second latency and high concurrency for API requests.
 
 <img
-  src="https://lgo0ecceic.ucarecd.net/418db1f9-7597-4e00-8c10-eba19fcac20f/"
+  src="https://raw.githubusercontent.com/cube-js/cube/master/docs/content/cube-core-schema.png"
+  alt="Cube Core — semantic layer connecting data sources to embedded analytics, BI tools, and AI agents"
   style="border: none"
   width="100%"
 />
 
 <p align="center">
-  <i>Learn more about connecting Cube to <a href="https://cube.dev/cube-core/getting-started/create-a-project?ref=github-readme" target="_blank">data sources</a> and <a href="https://cube.dev/docs/integrations?ref=github-readme" target="_blank">analytics & visualization tools</a>.</i>
+  <i>Learn more about connecting Cube to <a href="https://docs.cube.dev/cube-core/getting-started/create-a-project?ref=github-readme" target="_blank">data sources</a> and <a href="https://docs.cube.dev/docs/integrations?ref=github-readme" target="_blank">analytics & visualization tools</a>.</i>
 </p>
 
 ## Why Cube Core?
@@ -46,7 +46,7 @@ docker run -p 4000:4000 \
 
 Then open http://localhost:4000 in your browser to continue setup.
 
-For a step-by-step guide, [see the docs](https://cube.dev/cube-core/getting-started/create-a-project?ref=github-readme).
+For a step-by-step guide, [see the docs](https://docs.cube.dev/cube-core/getting-started/create-a-project?ref=github-readme).
 
 ## Cube Core vs. Cube
 
@@ -69,10 +69,10 @@ Or [try Cube for free](https://cubecloud.dev/auth/signup?ref=github-readme).
 
 ## Resources
 
-- [Documentation](https://cube.dev/docs?ref=github-readme)
-- [Getting Started](https://cube.dev/cube-core/getting-started?ref=github-readme)
-- [Examples & Tutorials](https://cube.dev/recipes?ref=github-readme)
-- [Architecture](https://cube.dev/docs/introduction)
+- [Documentation](https://docs.cube.dev?ref=github-readme)
+- [Getting Started](https://docs.cube.dev/cube-core/getting-started?ref=github-readme)
+- [Examples & Tutorials](https://docs.cube.dev/recipes?ref=github-readme)
+- [Architecture](https://docs.cube.dev/docs/introduction)
 
 ## Contributing
 

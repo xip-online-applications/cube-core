@@ -498,6 +498,7 @@ export class CubejsServerCore {
           this.options.queryRewrite || this.options.queryTransformer,
         extendContext: this.options.extendContext,
         playgroundAuthSecret: getEnv('playgroundAuthSecret'),
+        apiSecrets: this.options.apiSecrets,
         jwt: this.options.jwt,
         refreshScheduler: this.getRefreshScheduler.bind(this),
         scheduledRefreshContexts: this.options.scheduledRefreshContexts,
@@ -554,7 +555,6 @@ export class CubejsServerCore {
           ),
           externalDialectClass: this.options.externalDialectFactory && this.options.externalDialectFactory(context),
           schemaVersion: currentSchemaVersion,
-          contextToRoles: this.options.contextToRoles,
           contextToGroups: this.options.contextToGroups,
           preAggregationsSchema: await this.preAggregationsSchema(context),
           context,
@@ -745,7 +745,6 @@ export class CubejsServerCore {
   protected createCompilerApiOptions(options: Record<string, any> = {}): CompilerApiOptions {
     return {
       schemaVersion: options.schemaVersion || this.options.schemaVersion,
-      contextToRoles: this.options.contextToRoles,
       contextToGroups: this.options.contextToGroups,
       devServer: this.options.devServer,
       logger: this.logger,
@@ -755,6 +754,7 @@ export class CubejsServerCore {
           this.options.allowUngroupedWithoutPrimaryKey ||
           getEnv('allowUngroupedWithoutPrimaryKey'),
       convertTzForRawTimeDimension: getEnv('convertTzForRawTimeDimension'),
+      localRefreshKey: getEnv('refreshKeyLocalTime'),
       compileContext: options.context,
       dialectClass: options.dialectClass,
       externalDialectClass: options.externalDialectClass,

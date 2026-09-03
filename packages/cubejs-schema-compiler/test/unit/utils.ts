@@ -165,13 +165,13 @@ export function createCubeSchemaWithAccessPolicy(name: string, extraPolicies: st
         },
         accessPolicy: [
           {
-            role: "*",
+            group: "*",
             rowLevel: {
               allowAll: true
             }
           },
           {
-            role: 'admin',
+            group: 'admin',
             conditions: [
               {
                 if: \`true\`,
@@ -192,7 +192,7 @@ export function createCubeSchemaWithAccessPolicy(name: string, extraPolicies: st
             },
           },
           {
-            role: 'manager',
+            group: 'manager',
             conditions: [
               {
                 if: security_context.userId === 1,
@@ -409,7 +409,7 @@ export function createViewSchemaWithDefaultValueFilter(): string {
         join_path: orders,
         includes: '*',
       }],
-      filters: [
+      defaultFilters: [
         {
           member: \`currency\`,
           operator: 'equals',

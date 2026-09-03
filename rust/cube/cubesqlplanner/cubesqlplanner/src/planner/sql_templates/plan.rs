@@ -88,6 +88,10 @@ impl PlanSqlTemplates {
         self.driver_tools.timestamp_precision()
     }
 
+    pub fn should_reuse_params(&self) -> Result<bool, CubeError> {
+        self.driver_tools.should_reuse_params()
+    }
+
     pub fn time_stamp_cast(&self, field: String) -> Result<String, CubeError> {
         self.driver_tools.time_stamp_cast(field)
     }
@@ -239,8 +243,41 @@ impl PlanSqlTemplates {
         )
     }
 
+    pub fn window_function(
+        &self,
+        fun_call: &str,
+        partition_by_concat: &str,
+        order_by_concat: &str,
+        window_frame: &str,
+    ) -> Result<String, CubeError> {
+        self.render.render_template(
+            "expressions/window_function",
+            context! {
+                fun_call => fun_call,
+                partition_by_concat => partition_by_concat,
+                order_by_concat => order_by_concat,
+                window_frame => window_frame,
+            },
+        )
+    }
+
     pub fn query_aliased(&self, query: &str, alias: &str) -> Result<String, CubeError> {
         let quoted_alias = self.quote_identifier(alias)?;
+        self.render.render_template(
+            "expressions/query_aliased",
+            context! { query => query, quoted_alias => quoted_alias },
+        )
+    }
+
+    /// Like [`Self::query_aliased`] but takes an alias that is already a final,
+    /// quote-ready identifier and must not be re-quoted. Used for SQL-API
+    /// sub-query joins, whose alias the SQL API emits pre-quoted and references
+    /// verbatim in the ON condition.
+    pub fn query_aliased_prequoted(
+        &self,
+        query: &str,
+        quoted_alias: &str,
+    ) -> Result<String, CubeError> {
         self.render.render_template(
             "expressions/query_aliased",
             context! { query => query, quoted_alias => quoted_alias },
@@ -304,6 +341,16 @@ impl PlanSqlTemplates {
                 strings => strings,
             },
         )
+    }
+
+    pub fn wrap_segment_select(&self, expr: String) -> Result<String, CubeError> {
+        self.render
+            .render_template("expressions/wrap_segment_select", context! { expr => expr })
+    }
+
+    pub fn wrap_segment_filter(&self, expr: String) -> Result<String, CubeError> {
+        self.render
+            .render_template("expressions/wrap_segment_filter", context! { expr => expr })
     }
 
     pub fn group_by(&self, items: Vec<TemplateGroupByColumn>) -> Result<String, CubeError> {
@@ -411,6 +458,7 @@ impl PlanSqlTemplates {
         limit: Option<usize>,
         offset: Option<usize>,
         distinct: bool,
+        recursive: bool,
     ) -> Result<String, CubeError> {
         self.render.render_template(
             "statements/select",
@@ -426,6 +474,7 @@ impl PlanSqlTemplates {
                 offset => offset,
                 distinct => distinct,
                 ctes => ctes,
+                recursive => recursive,
             },
         )
     }
@@ -437,9 +486,9 @@ impl PlanSqlTemplates {
         join_type: &JoinType,
     ) -> Result<String, CubeError> {
         let join_type = match join_type {
-            JoinType::Full => self.render.get_template("join_types/full")?,
-            JoinType::Inner => self.render.get_template("join_types/inner")?,
-            JoinType::Left => self.render.get_template("join_types/left")?,
+            JoinType::Full => self.render.get_template("tesseract/join_types_full")?,
+            JoinType::Inner => self.render.get_template("tesseract/join_types_inner")?,
+            JoinType::Left => self.render.get_template("tesseract/join_types_left")?,
         };
         self.render.render_template(
             "statements/join",
@@ -490,7 +539,7 @@ impl PlanSqlTemplates {
     }
 
     pub fn supports_full_join(&self) -> bool {
-        self.render.contains_template("join_types/full")
+        self.render.contains_template("tesseract/join_types_full")
     }
 
     pub fn supports_is_not_distinct_from(&self) -> bool {
@@ -514,6 +563,15 @@ impl PlanSqlTemplates {
                 || self
                     .driver_tools()
                     .support_generated_series_for_custom_td()?))
+    }
+
+    /// Whether the dialect's generated time series is a self-referencing
+    /// recursive CTE that must be wrapped in `WITH RECURSIVE` (e.g. MySQL).
+    /// MSSQL also uses a recursive CTE but relies on implicit recursion (plain
+    /// `WITH`), so it does not set this marker.
+    pub fn generated_time_series_is_recursive(&self) -> bool {
+        self.render
+            .contains_template("statements/generated_time_series_recursive")
     }
 
     pub fn generated_time_series_select(
@@ -770,6 +828,23 @@ impl PlanSqlTemplates {
     pub fn number_param_cast(&self, expr: &str) -> Result<String, CubeError> {
         self.render
             .render_template(&"tesseract/number_param_cast", context! { expr => expr })
+    }
+
+    pub fn like_escape_char(&self) -> Result<Option<char>, CubeError> {
+        const TEMPLATE_NAME: &str = "filters/like_escape_char";
+
+        if !self.render.contains_template(TEMPLATE_NAME) {
+            return Ok(None);
+        }
+
+        let rendered = self.render.render_template(TEMPLATE_NAME, context! {})?;
+        let mut characters = rendered.chars();
+        match (characters.next(), characters.next()) {
+            (Some(character), None) => Ok(Some(character)),
+            _ => Err(CubeError::internal(format!(
+                "{TEMPLATE_NAME} must render exactly one character"
+            ))),
+        }
     }
 
     pub fn additional_null_check(&self, need: bool, column: &String) -> Result<String, CubeError> {

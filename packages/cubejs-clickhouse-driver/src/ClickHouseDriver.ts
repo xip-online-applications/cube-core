@@ -1,12 +1,8 @@
-/**
- * @copyright Cube Dev, Inc.
- * @license Apache-2.0
- * @fileoverview The `ClickHouseDriver` and related types declaration.
- */
-
 import {
   getEnv,
   assertDataSource,
+  extractRequestUUID,
+  formatMySql,
 } from '@cubejs-backend/shared';
 import {
   BaseDriver,
@@ -21,7 +17,6 @@ import {
   StreamOptions,
   StreamTableDataWithTypes,
   TableColumn,
-  TableColumnQueryResult,
   TableQueryResult,
   TableStructure,
   UnloadOptions,
@@ -31,9 +26,9 @@ import { Readable } from 'node:stream';
 import { ClickHouseClient, createClient } from '@clickhouse/client';
 import type { ClickHouseSettings, ResponseJSON } from '@clickhouse/client';
 import { v4 as uuidv4 } from 'uuid';
-import sqlstring from 'sqlstring';
 
 import { transformRow, transformStreamRow } from './HydrationStream';
+import { formatError } from './utils';
 
 const SUPPORTED_BUCKET_TYPES = ['s3'];
 
@@ -96,6 +91,12 @@ export interface ClickHouseDriverOptions {
    * Whether this driver is used for pre-aggregations.
    */
   preAggregations?: boolean,
+
+  /**
+   * Custom HTTP headers attached to every request sent to ClickHouse.
+   * @see https://clickhouse.com/docs/integrations/javascript#configuration
+   */
+  headers?: Record<string, string>,
 }
 
 interface ClickhouseDriverExportRequiredAWS {
@@ -122,6 +123,7 @@ type ClickHouseDriverConfig = {
   exportBucket: ClickhouseDriverExportAWS | null,
   compression: { response?: boolean; request?: boolean },
   clickhouseSettings: ClickHouseSettings,
+  headers: Record<string, string>,
 };
 
 export class ClickHouseDriver extends BaseDriver implements DriverInterface {
@@ -189,30 +191,36 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
         // can not be changed
         ...(this.readOnlyMode ? {} : { join_use_nulls: 1 }),
       },
+      // Custom HTTP headers can only be passed via driver_factory, not env vars.
+      headers: config.headers ?? {},
     };
 
-    const maxPoolSize = config.maxPoolSize ?? getEnv('dbMaxPoolSize', { dataSource, preAggregations }) ?? 8;
+    const maxPoolSize = config.maxPoolSize ??
+      getEnv('dbMaxPoolSize', { dataSource, preAggregations }) ??
+      ClickHouseDriver.getDefaultConcurrency();
 
     this.client = this.createClient(maxPoolSize);
   }
 
-  protected withCancel<T>(fn: (con: ClickHouseClient, queryId: string, signal: AbortSignal) => Promise<T>): Promise<T> {
-    const queryId = uuidv4();
+  private buildQueryId(requestId?: string): string {
+    const prefix = requestId ? extractRequestUUID(requestId).slice(0, 63) : '';
+    if (!prefix) {
+      return uuidv4();
+    }
+
+    return `${prefix}-${uuidv4()}`;
+  }
+
+  protected withCancel<T>(
+    fn: (con: ClickHouseClient, queryId: string, signal: AbortSignal) => Promise<T>,
+    options?: QueryOptions,
+  ): Promise<T> {
+    const queryId = this.buildQueryId(options?.requestId);
 
     const abortController = new AbortController();
     const { signal } = abortController;
 
     const promise = (async () => {
-      const pingResult = await this.client.ping();
-      if (!pingResult.success) {
-        // TODO replace string formatting with proper cause
-        // pingResult.error can be AggregateError when ClickHouse hostname resolves to multiple addresses
-        let errorMessage = pingResult.error.toString();
-        if (pingResult.error instanceof AggregateError) {
-          errorMessage = `Aggregate error: ${pingResult.error.message}; errors: ${pingResult.error.errors.join('; ')}`;
-        }
-        throw new Error(`Connection check failed: ${errorMessage}`);
-      }
       signal.throwIfAborted();
       // Queries sent by `fn` can hit a timeout error, would _not_ get killed, and continue running in ClickHouse
       // TODO should we kill those as well?
@@ -226,7 +234,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       const killClient = this.createClient(1);
       try {
         await killClient.command({
-          query: `KILL QUERY WHERE query_id = '${queryId}'`,
+          query: formatMySql('KILL QUERY WHERE query_id = ?', [queryId]),
         });
       } finally {
         await killClient.close();
@@ -246,6 +254,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       clickhouse_settings: this.config.clickhouseSettings,
       request_timeout: this.config.requestTimeout,
       max_open_connections: maxPoolSize,
+      http_headers: this.config.headers,
     });
   }
 
@@ -259,13 +268,13 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       true;
   }
 
-  public async query<R = unknown>(query: string, values: unknown[]): Promise<R[]> {
-    const response = await this.queryResponse(query, values);
+  public async query<R = unknown>(query: string, values: unknown[], options?: QueryOptions): Promise<R[]> {
+    const response = await this.queryResponse(query, values, options);
     return this.normaliseResponse(response);
   }
 
-  protected queryResponse(query: string, values: unknown[]): Promise<ResponseJSON<Record<string, unknown>>> {
-    const formattedQuery = sqlstring.format(query, values);
+  protected queryResponse(query: string, values: unknown[], options?: QueryOptions): Promise<ResponseJSON<Record<string, unknown>>> {
+    const formattedQuery = formatMySql(query, values);
 
     return this.withCancel(async (connection, queryId, signal) => {
       try {
@@ -289,10 +298,9 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
         const results = await resultSet.json<Record<string, unknown>>();
         return results;
       } catch (e) {
-        // TODO replace string formatting with proper cause
-        throw new Error(`Query failed: ${e}; query id: ${queryId}`);
+        throw new Error(`Query failed: ${formatError(e)}; query id: ${queryId}`, { cause: e });
       }
-    });
+    }, options);
   }
 
   protected normaliseResponse<R = unknown>(res: ResponseJSON<Record<string, unknown>>): Array<R> {
@@ -363,14 +371,14 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
     query: string,
     values: unknown[],
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    { highWaterMark }: StreamOptions
+    { highWaterMark, requestId }: StreamOptions
   ): Promise<StreamTableDataWithTypes> {
     // Use separate client for this long-living query
     const client = this.createClient(1);
-    const queryId = uuidv4();
+    const queryId = this.buildQueryId(requestId);
 
     try {
-      const formattedQuery = sqlstring.format(query, values);
+      const formattedQuery = formatMySql(query, values);
 
       const format = 'JSONCompactEachRowWithNamesAndTypes';
 
@@ -438,8 +446,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       };
     } catch (e) {
       await client.close();
-      // TODO replace string formatting with proper cause
-      throw new Error(`Stream query failed: ${e}; query id: ${queryId}`);
+      throw new Error(`Stream query failed: ${formatError(e)}; query id: ${queryId}`, { cause: e });
     }
   }
 
@@ -452,7 +459,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       return this.stream(query, values, options);
     }
 
-    const response = await this.queryResponse(query, values);
+    const response = await this.queryResponse(query, values, options);
 
     return {
       rows: this.normaliseResponse(response),
@@ -504,8 +511,8 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
     return this.query('SELECT name as table_name FROM system.tables WHERE database = ?', [schemaName]);
   }
 
-  public override async dropTable(tableName: string, _options?: QueryOptions): Promise<void> {
-    await this.command(`DROP TABLE ${tableName}`);
+  public override async dropTable(tableName: string, options?: QueryOptions): Promise<void> {
+    await this.command(`DROP TABLE ${tableName}`, options);
   }
 
   protected getExportBucket(
@@ -557,7 +564,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
   /**
    * Returns an array of queried fields meta info.
    */
-  public async queryColumnTypes(sql: string, params: unknown[]): Promise<TableStructure> {
+  public async queryColumnTypes(sql: string, params: unknown[], options?: QueryOptions): Promise<TableStructure> {
     // For DESCRIBE we expect that each row would have special structure
     // See https://clickhouse.com/docs/en/sql-reference/statements/describe-table
     // TODO complete this type
@@ -565,7 +572,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       name: string,
       type: string
     };
-    const columns = await this.query<DescribeRow>(`DESCRIBE ${sql}`, params);
+    const columns = await this.query<DescribeRow>(`DESCRIBE ${sql}`, params, options);
     if (!columns) {
       throw new Error('Unable to describe table');
     }
@@ -586,8 +593,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
     try {
       await this.command(createTableSql);
     } catch (e) {
-      // TODO replace string formatting with proper cause
-      throw new Error(`Create table failed: ${e}`);
+      throw new Error(`Create table ${quotedTableName} failed: ${formatError(e)}`, { cause: e });
     }
   }
 
@@ -606,16 +612,16 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
     );
   }
 
-  public async unloadFromQuery(sql: string, params: unknown[], _options: UnloadOptions): Promise<DownloadTableCSVData> {
+  public async unloadFromQuery(sql: string, params: unknown[], options: UnloadOptions): Promise<DownloadTableCSVData> {
     if (!this.config.exportBucket) {
       throw new Error('Unload is not configured');
     }
 
-    const types = await this.queryColumnTypes(`(${sql})`, params);
+    const types = await this.queryColumnTypes(`(${sql})`, params, { requestId: options.requestId });
     const { bucketName, path } = this.parseBucketUrl(this.config.exportBucket.bucketName);
     const exportPrefix = path ? `${path}/${uuidv4()}` : uuidv4();
 
-    const formattedQuery = sqlstring.format(`
+    const formattedQuery = formatMySql(`
       INSERT INTO FUNCTION
          s3(
              'https://${bucketName}.s3.${this.config.exportBucket.region}.amazonaws.com/${exportPrefix}/export.csv.gz',
@@ -626,7 +632,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       ${sql}
     `, params);
 
-    await this.command(formattedQuery);
+    await this.command(formattedQuery, { requestId: options.requestId });
 
     const csvFile = await this.extractUnloadedFilesFromS3(
       {
@@ -657,26 +663,34 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
   }
 
   // This is not part of a driver interface, and marked public only for testing
-  public async command(query: string): Promise<void> {
+  public async command(query: string, options?: QueryOptions): Promise<void> {
     await this.withCancel(async (connection, queryId, signal) => {
-      await connection.command({
-        query,
-        query_id: queryId,
-        abort_signal: signal,
-      });
-    });
+      try {
+        await connection.command({
+          query,
+          query_id: queryId,
+          abort_signal: signal,
+        });
+      } catch (e) {
+        throw new Error(`Command failed: ${formatError(e)}; query id: ${queryId}`, { cause: e });
+      }
+    }, options);
   }
 
   // This is not part of a driver interface, and marked public only for testing
-  public async insert(table: string, values: Array<Array<unknown>>): Promise<void> {
+  public async insert(table: string, values: Array<Array<unknown>>, options?: QueryOptions): Promise<void> {
     await this.withCancel(async (connection, queryId, signal) => {
-      await connection.insert({
-        table,
-        values,
-        format: 'JSONCompactEachRow',
-        query_id: queryId,
-        abort_signal: signal,
-      });
-    });
+      try {
+        await connection.insert({
+          table,
+          values,
+          format: 'JSONCompactEachRow',
+          query_id: queryId,
+          abort_signal: signal,
+        });
+      } catch (e) {
+        throw new Error(`Insert failed: ${formatError(e)}; query id: ${queryId}`, { cause: e });
+      }
+    }, options);
   }
 }

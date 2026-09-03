@@ -14,9 +14,9 @@ use crate::{
     transport::{
         CubeMeta, CubeMetaDimension, CubeMetaJoin, CubeMetaMeasure, CubeMetaSegment,
         CubeStreamReceiver, LoadRequestMeta, MetaContext, SpanId, SqlGenerator, SqlResponse,
-        SqlTemplates, TransportLoadRequestQuery, TransportLoadResponse, TransportService,
+        SqlTemplates, TransportLoadRequestQuery, TransportLoadResponseColumnar, TransportService,
     },
-    CubeError,
+    CubeError, CubeErrorCauseType,
 };
 use async_trait::async_trait;
 use cubeclient::models::V1CubeMetaType;
@@ -29,9 +29,13 @@ pub mod rewrite_engine;
 #[cfg(test)]
 pub mod test_bi_workarounds;
 #[cfg(test)]
+pub mod test_copy;
+#[cfg(test)]
 pub mod test_cube_join;
 #[cfg(test)]
 pub mod test_cube_join_grouped;
+#[cfg(test)]
+pub mod test_cube_join_views;
 #[cfg(test)]
 pub mod test_cube_scan;
 #[cfg(test)]
@@ -670,6 +674,7 @@ pub fn sql_generator(
             SqlTemplates::new(
                 vec![
                     ("functions/COALESCE".to_string(), "COALESCE({{ args_concat }})".to_string()),
+                    ("functions/NULLIF".to_string(), "NULLIF({{ args_concat }})".to_string()),
                     ("functions/SUM".to_string(), "SUM({{ args_concat }})".to_string()),
                     ("functions/MIN".to_string(), "MIN({{ args_concat }})".to_string()),
                     ("functions/MAX".to_string(), "MAX({{ args_concat }})".to_string()),
@@ -688,10 +693,20 @@ pub fn sql_generator(
                     ("functions/TRUNC".to_string(), "TRUNC({{ args_concat }})".to_string()),
                     ("functions/LAG".to_string(), "LAG({{ args_concat }})".to_string()),
                     ("functions/LEAD".to_string(), "LEAD({{ args_concat }})".to_string()),
+                    ("functions/ROW_NUMBER".to_string(), "ROW_NUMBER({{ args_concat }})".to_string()),
+                    ("functions/RANK".to_string(), "RANK({{ args_concat }})".to_string()),
+                    ("functions/DENSE_RANK".to_string(), "DENSE_RANK({{ args_concat }})".to_string()),
+                    ("functions/PERCENT_RANK".to_string(), "PERCENT_RANK({{ args_concat }})".to_string()),
+                    ("functions/CUME_DIST".to_string(), "CUME_DIST({{ args_concat }})".to_string()),
+                    ("functions/NTILE".to_string(), "NTILE({{ args_concat }})".to_string()),
+                    ("functions/FIRST_VALUE".to_string(), "FIRST_VALUE({{ args_concat }})".to_string()),
+                    ("functions/LAST_VALUE".to_string(), "LAST_VALUE({{ args_concat }})".to_string()),
+                    ("functions/NTH_VALUE".to_string(), "NTH_VALUE({{ args_concat }})".to_string()),
                     ("functions/LEAST".to_string(), "LEAST({{ args_concat }})".to_string()),
                     ("functions/DATEDIFF".to_string(), "DATEDIFF({{ date_part }}, {{ args[1] }}, {{ args[2] }})".to_string()),
                     ("functions/CURRENTDATE".to_string(), "CURRENT_DATE({{ args_concat }})".to_string()),
                     ("functions/NOW".to_string(), "NOW({{ args_concat }})".to_string()),
+                    ("functions/UTCTIMESTAMP".to_string(), "(NOW() AT TIME ZONE 'UTC')".to_string()),
                     ("functions/DATE_ADD".to_string(), "DATE_ADD({{ args_concat }})".to_string()),
                     ("functions/CONCAT".to_string(), "CONCAT({{ args_concat }})".to_string()),
                     ("functions/DATE".to_string(), "DATE({{ args_concat }})".to_string()),
@@ -700,6 +715,7 @@ pub fn sql_generator(
                     ("functions/LOWER".to_string(), "LOWER({{ args_concat }})".to_string()),
                     ("functions/UPPER".to_string(), "UPPER({{ args_concat }})".to_string()),
                     ("functions/PERCENTILECONT".to_string(), "PERCENTILE_CONT({{ args_concat }})".to_string()),
+                    ("functions/WIDTH_BUCKET".to_string(), "WIDTH_BUCKET({{ args_concat }})".to_string()),
                     ("expressions/query_aliased".to_string(), "{{ query }} AS {{ quoted_alias }}".to_string()),
                     ("expressions/extract".to_string(), "EXTRACT({{ date_part }} FROM {{ expr }})".to_string()),
                     (
@@ -722,6 +738,15 @@ OFFSET {{ offset }}{% endif %}"#.to_string(),
                         "{{ join_type }} JOIN {{ source }} ON {{ condition }}".to_string(),
                     ),
                     (
+                        "statements/union".to_string(),
+                        r#"{% for query in queries %}(
+{{ query | indent(2, true) }}
+){% if not loop.last %}
+UNION {% if not distinct %}ALL {% endif %}{% endif %}{% endfor %}{% if limit is not none %}
+LIMIT {{ limit }}{% endif %}"#
+                            .to_string(),
+                    ),
+                    (
                         "statements/group_by_exprs".to_string(),
                         "{{ group_by | map(attribute='index') | join(', ') }}".to_string(),
                     ),
@@ -730,6 +755,7 @@ OFFSET {{ offset }}{% endif %}"#.to_string(),
                         "{{expr}} {{quoted_alias}}".to_string(),
                     ),
                     ("expressions/binary".to_string(), "({{ left }} {{ op }} {{ right }})".to_string()),
+                    ("expressions/int_division".to_string(), "({{ left }} / {{ right }})".to_string()),
                     ("expressions/is_null".to_string(), "({{ expr }} IS {% if negate %}NOT {% endif %}NULL)".to_string()),
                     ("expressions/case".to_string(), "CASE{% if expr %} {{ expr }}{% endif %}{% for when, then in when_then %} WHEN {{ when }} THEN {{ then }}{% endfor %}{% if else_expr %} ELSE {{ else_expr }}{% endif %} END".to_string()),
                     ("expressions/sort".to_string(), "{{ expr }} {% if asc %}ASC{% else %}DESC{% endif %}{% if nulls_first %} NULLS FIRST {% endif %}".to_string()),
@@ -754,6 +780,8 @@ OFFSET {{ offset }}{% endif %}"#.to_string(),
                     ("expressions/between".to_string(), "{{ expr }} {% if negated %}NOT {% endif %}BETWEEN {{ low }} AND {{ high }}".to_string()),
                     ("join_types/inner".to_string(), "INNER".to_string()),
                     ("join_types/left".to_string(), "LEFT".to_string()),
+                    ("join_types/right".to_string(), "RIGHT".to_string()),
+                    ("join_types/full".to_string(), "FULL".to_string()),
                     ("quotes/identifiers".to_string(), "\"".to_string()),
                     ("quotes/escape".to_string(), "\"\"".to_string()),
                     ("params/param".to_string(), "${{ param_index + 1 }}".to_string()),
@@ -778,6 +806,11 @@ OFFSET {{ offset }}{% endif %}"#.to_string(),
                     ("types/binary".to_string(), "BINARY".to_string()),
                 ]
                     .into_iter().chain(custom_templates)
+                    .collect::<HashMap<_, _>>()
+                    .into_iter()
+                    // Custom template with an empty value removes the base template,
+                    // allowing tests to check behavior of data sources without it
+                    .filter(|(_, value)| !value.is_empty())
                     .collect(),
                     false,
             )
@@ -813,6 +846,47 @@ fn get_test_tenant_ctx_with_meta_and_templates(
 
 pub fn get_test_tenant_ctx_with_meta(meta: Vec<CubeMeta>) -> Arc<MetaContext> {
     get_test_tenant_ctx_with_meta_and_templates(meta, vec![])
+}
+
+/// The standard test meta with its cubes spread across several data sources: every cube
+/// named in `cube_data_sources` reaches the data source it is paired with, everything else
+/// reaches `default`.
+pub fn get_test_tenant_ctx_with_cube_data_sources(
+    cube_data_sources: Vec<(&str, &str)>,
+) -> Arc<MetaContext> {
+    let data_source_for_cube = |cube: &str| {
+        cube_data_sources
+            .iter()
+            .find(|(name, _)| *name == cube)
+            .map_or("default", |(_, data_source)| *data_source)
+            .to_string()
+    };
+
+    let meta = get_test_meta();
+    let member_to_data_source: HashMap<_, _> = meta
+        .iter()
+        .flat_map(|cube| {
+            let data_source = data_source_for_cube(&cube.name);
+            cube.dimensions
+                .iter()
+                .map(|d| &d.name)
+                .chain(cube.measures.iter().map(|m| &m.name))
+                .chain(cube.segments.iter().map(|s| &s.name))
+                .map(move |member| (member.clone(), data_source.clone()))
+        })
+        .collect();
+
+    let data_source_to_sql_generator = member_to_data_source
+        .values()
+        .map(|data_source| (data_source.clone(), sql_generator(vec![])))
+        .collect();
+
+    Arc::new(MetaContext::new(
+        meta,
+        member_to_data_source,
+        data_source_to_sql_generator,
+        Uuid::new_v4(),
+    ))
 }
 
 pub async fn get_test_session(
@@ -907,7 +981,7 @@ pub struct TestTransportLoadCall {
 #[derive(Debug)]
 struct TestConnectionTransport {
     meta_context: Arc<MetaContext>,
-    load_mocks: tokio::sync::Mutex<Vec<(TransportLoadRequestQuery, TransportLoadResponse)>>,
+    load_mocks: tokio::sync::Mutex<Vec<(TransportLoadRequestQuery, TransportLoadResponseColumnar)>>,
     load_calls: tokio::sync::Mutex<Vec<TestTransportLoadCall>>,
 }
 
@@ -927,7 +1001,7 @@ impl TestConnectionTransport {
     pub async fn add_cube_load_mock(
         &self,
         req: TransportLoadRequestQuery,
-        res: TransportLoadResponse,
+        res: TransportLoadResponseColumnar,
     ) {
         self.load_mocks.lock().await.push((req, res));
     }
@@ -1137,7 +1211,7 @@ impl TestContext {
     pub async fn add_cube_load_mock(
         &self,
         mut req: TransportLoadRequestQuery,
-        res: TransportLoadResponse,
+        res: TransportLoadResponseColumnar,
     ) {
         // Fill in default limit to simplify passing queries as they were in logical plan
         let config_limit = self.config_obj.non_streaming_query_max_row_limit();
@@ -1171,10 +1245,11 @@ impl TestContext {
         let mut output_flags = StatusFlags::empty();
 
         for query in queries {
-            let query = self
-                .convert_sql_to_cube_query(&query)
-                .await
-                .map_err(|e| CubeError::internal(format!("Error during planning: {}", e)))?;
+            let query = self.convert_sql_to_cube_query(&query).await.map_err(|e| {
+                let mut error = CubeError::from(e);
+                error.cause = CubeErrorCauseType::Planning(error.cause.meta().cloned());
+                error
+            })?;
             match query {
                 QueryPlan::DataFusionSelect(plan, ctx) => {
                     let df = DFDataFrame::new(ctx.state, &plan);
@@ -1187,7 +1262,9 @@ impl TestContext {
                     output.push(frame.print());
                     output_flags = flags;
                 }
-                QueryPlan::CreateTempTable(_, _, _, _) => {
+                QueryPlan::CreateTempTable(_, _, _, _, _)
+                | QueryPlan::CopyFrom(_)
+                | QueryPlan::CreateEmptyTempTable(_) => {
                     // nothing to do
                 }
                 QueryPlan::MetaOk(flags, _) => {

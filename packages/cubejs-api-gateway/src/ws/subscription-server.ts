@@ -33,7 +33,7 @@ const methodParams: Record<string, string[]> = Object.freeze({
   load: ['query', 'queryType', 'cache'],
   sql: ['query'],
   'dry-run': ['query'],
-  meta: [],
+  meta: ['onlyViews'],
   subscribe: ['query', 'queryType', 'cache'],
   unsubscribe: [],
 });
@@ -244,7 +244,9 @@ export class SubscriptionServer {
       await this.sendMessage(connectionId, { messageProcessedId: message.messageId });
     } catch (e) {
       const messageId = 'messageId' in message ? message.messageId : undefined;
-      const query = 'params' in message ? message.params?.query : undefined;
+      const query = 'params' in message && message.params && 'query' in message.params
+        ? message.params.query
+        : undefined;
 
       this.apiGateway.handleError({
         e,
