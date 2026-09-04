@@ -12,6 +12,7 @@ import {
   RetrieveForProcessingSuccess
 } from '@cubejs-backend/base-driver';
 import { CubeStoreQueueDriver } from '@cubejs-backend/cubestore-driver';
+import { Tracer } from '@cubejs-backend/tracer';
 
 import { TimeoutError } from './TimeoutError';
 import { ContinueWaitError } from './ContinueWaitError';
@@ -59,6 +60,12 @@ export type QueryQueueOptions = {
   queueDriverFactory?: (cacheAndQueueDriver: string, queueDriverOptions: any) => QueueDriverInterface,
   skipQueue?: boolean,
 };
+
+function tenantIdFromQueryDef(query: QueryDef): string {
+  return query.query?.requestContext?.securityContext?.tenantId
+    || query.query?.context?.securityContext?.tenantId
+    || 'unknown';
+}
 
 function factoryQueueDriver(cacheAndQueueDriver: string, queueDriverOptions): QueueDriverInterface {
   switch (cacheAndQueueDriver || 'memory') {
@@ -121,6 +128,7 @@ export class QueryQueue {
       protected readonly redisQueuePrefix: string,
       options: QueryQueueOptions
   ) {
+    Tracer.init();
     this.concurrency = options.concurrency || 2;
     this.continueWaitTimeout = options.continueWaitTimeout || 10;
     this.executionTimeout = options.executionTimeout || getEnv('dbQueryTimeout');
@@ -859,6 +867,12 @@ export class QueryQueue {
       let localCancelHandler: unknown = null;
       const startQueryTime = (new Date()).getTime();
       const timeInQueue = (new Date()).getTime() - query.addedToQueueTime;
+      const tenantIdentifier = tenantIdFromQueryDef(query);
+
+      Tracer.init().get().timing('time_in_queue', timeInQueue, {
+        tenant: tenantIdentifier,
+      });
+
       this.logger('Performing query', {
         queueId,
         queueSize,
@@ -978,10 +992,16 @@ export class QueryQueue {
             break;
         }
 
+        const duration = (new Date()).getTime() - startQueryTime;
+
+        Tracer.init().get().timing('query_duration', duration, {
+          tenant: tenantIdentifier,
+        });
+
         this.logger('Performing query completed', {
           queueId,
           queueSize,
-          duration: ((new Date()).getTime() - startQueryTime),
+          duration,
           queryKey: query.queryKey,
           queuePrefix: this.redisQueuePrefix,
           requestId: query.requestId,
