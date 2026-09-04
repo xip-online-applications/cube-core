@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import cronParser from 'cron-parser';
+import { isPredefinedGranularity, TIME_SERIES } from '@cubejs-backend/shared';
 
 import { CubeSymbols, CubeDefinition, ToString } from './CubeSymbols';
 import type { ErrorReporter } from './ErrorReporter';
@@ -108,6 +109,8 @@ const everyCronTimeZone = Joi.string().custom((value, helper) => {
     return helper.message({ custom: `(${formatStatePath(helper.state)} = ${value}) unknown timezone. Take a look here https://cube.dev/docs/schema/reference/cube#supported-timezones to get available time zones` });
   }
 });
+
+const PREDEFINED_GRANULARITY_NAMES = Object.keys(TIME_SERIES).sort();
 
 const GranularityInterval = Joi.string().pattern(/^\d+\s+(second|minute|hour|day|week|month|quarter|year)s?(\s\d+\s+(second|minute|hour|day|week|month|quarter|year)s?){0,7}$/, 'granularity interval');
 // Do not allow negative intervals for granularities, while offsets could be negative
@@ -311,6 +314,36 @@ const MaskSchema = Joi.alternatives([
   Joi.string(),
 ]);
 
+const LinkItemSchema = Joi.object().keys({
+  name: identifier.required(),
+  label: Joi.string().required(),
+  url: Joi.func(),
+  dashboard: Joi.string(),
+  icon: Joi.string(),
+  target: Joi.string().valid('blank', 'self'),
+  primary: Joi.boolean().strict(),
+  params: Joi.array().items(Joi.object().keys({
+    key: Joi.string().required(),
+    value: Joi.func().required(),
+  })),
+}).oxor('url', 'dashboard');
+
+const LinksSchema = Joi.array().items(LinkItemSchema).custom((value, helpers) => {
+  const names = value.map((link: any) => (typeof link.name === 'function' ? link.name() : link.name));
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (seen.has(name)) {
+      return helpers.error('any.custom', { message: `Duplicate link name '${name}'` });
+    }
+    seen.add(name);
+  }
+  const primaryCount = value.filter((link: any) => link.primary === true).length;
+  if (primaryCount > 1) {
+    return helpers.error('any.custom', { message: 'Only one link can be marked as primary' });
+  }
+  return value;
+});
+
 const BaseDimensionWithoutSubQuery = {
   aliases: Joi.array().items(Joi.string()),
   type: Joi.any().valid('string', 'number', 'boolean', 'time', 'geo').required(),
@@ -323,6 +356,7 @@ const BaseDimensionWithoutSubQuery = {
   description: Joi.string(),
   suggestFilterValues: Joi.boolean().strict(),
   enableSuggestions: Joi.boolean().strict(),
+  links: LinksSchema,
   mask: MaskSchema,
   format: Joi.when('type', {
     switch: [
@@ -784,15 +818,15 @@ const CubeRefreshKeySchema = condition(
 );
 
 const measureType = Joi.string().valid(
-  'number', 'string', 'boolean', 'time', 'sum', 'avg', 'min', 'max', 'countDistinct', 'runningTotal', 'countDistinctApprox'
+  'number', 'string', 'boolean', 'time', 'sum', 'avg', 'min', 'max', 'countDistinct', 'countDistinctApprox'
 );
 
 const measureTypeWithCount = Joi.string().valid(
-  'count', 'number', 'string', 'boolean', 'time', 'sum', 'avg', 'min', 'max', 'countDistinct', 'runningTotal', 'countDistinctApprox'
+  'count', 'number', 'string', 'boolean', 'time', 'sum', 'avg', 'min', 'max', 'countDistinct', 'countDistinctApprox'
 );
 
 const multiStageMeasureType = Joi.string().valid(
-  'count', 'number', 'string', 'boolean', 'time', 'sum', 'avg', 'min', 'max', 'countDistinct', 'runningTotal', 'countDistinctApprox', 'numberAgg',
+  'count', 'number', 'string', 'boolean', 'time', 'sum', 'avg', 'min', 'max', 'countDistinct', 'countDistinctApprox', 'numberAgg',
   'rank'
 );
 
@@ -810,6 +844,69 @@ const timeShiftItemOptional = Joi.object({
 })
   .xor('name', 'interval')
   .and('interval', 'type');
+
+// Top-level predicate inside `filter.include`: same shape as a query-time
+// filter. `member` and `values` are plain string/array only — neither
+// `filter.include[*].member` nor `filter.include[*].values` is covered by
+// `CubePropContextTranspiler.transpiledFieldsPatterns`, so a function form
+// here would never receive the `CUBE`/`SECURITY_CONTEXT` arguments and would
+// fail at runtime. Use the existing `accessPolicy.rowLevel.filters` if you
+// need dynamic predicates resolved against the security context.
+const MultiStageIncludeMemberFilterSchema = Joi.object().keys({
+  member: Joi.string().required(),
+  operator: Joi.any().valid(
+    'equals',
+    'notEquals',
+    'contains',
+    'notContains',
+    'startsWith',
+    'notStartsWith',
+    'endsWith',
+    'notEndsWith',
+    'in',
+    'notIn',
+    'gt',
+    'gte',
+    'lt',
+    'lte',
+    'set',
+    'notSet',
+    'inDateRange',
+    'notInDateRange',
+    'onTheDate',
+    'beforeDate',
+    'beforeOrOnDate',
+    'afterDate',
+    'afterOrOnDate',
+    'measureFilter',
+  ).required(),
+  values: Joi.when('operator', {
+    is: Joi.valid('set', 'notSet'),
+    then: Joi.array().optional(),
+    otherwise: Joi.array().required()
+  })
+});
+
+const MultiStageIncludeConditionSchema = Joi.object().keys({
+  or: Joi.array().items(MultiStageIncludeMemberFilterSchema, Joi.link('...').description('Multi-stage include condition')),
+  and: Joi.array().items(MultiStageIncludeMemberFilterSchema, Joi.link('...').description('Multi-stage include condition')),
+}).xor('or', 'and');
+
+const MultiStageFilter = Joi.object().keys({
+  mode: Joi.string().valid('relative', 'fixed'),
+  exclude: Joi.func(),
+  keepOnly: Joi.func(),
+  include: Joi.array().items(
+    MultiStageIncludeMemberFilterSchema,
+    MultiStageIncludeConditionSchema
+  ),
+}).nand('exclude', 'keepOnly');
+
+const MultiStageGrain = Joi.object().keys({
+  exclude: Joi.func(),
+  keepOnly: Joi.func(),
+  include: Joi.func(),
+}).nand('exclude', 'keepOnly');
 
 const CaseSchema = Joi.object().keys({
   when: Joi.array().items(Joi.object().keys({
@@ -858,6 +955,8 @@ const MeasuresSchema = Joi.object().pattern(identifierRegex, Joi.alternatives().
       groupBy: Joi.func(),
       reduceBy: Joi.func(),
       addGroupBy: Joi.func(),
+      filter: MultiStageFilter,
+      grain: MultiStageGrain,
       timeShift: Joi.alternatives().conditional(Joi.array().length(1), {
         then: Joi.array().items(timeShiftItemOptional),
         otherwise: Joi.array().items(timeShiftItemRequired)
@@ -940,6 +1039,7 @@ const DimensionsSchema = Joi.object().pattern(identifierRegex, Joi.alternatives(
       multiStage: Joi.boolean().valid(true),
       sql: Joi.func().required(),
       addGroupBy: Joi.func(),
+      filter: MultiStageFilter,
     }),
     // TODO should be valid only for calendar cubes, but this requires significant refactoring
     // of all schemas. Left for the future when we'll switch to zod.
@@ -1034,8 +1134,7 @@ const RowLevelPolicySchema = Joi.object().keys({
   allowAll: Joi.boolean().valid(true).strict(),
 }).xor('filters', 'allowAll');
 
-const RolePolicySchema = Joi.object().keys({
-  role: Joi.string(),
+const GroupPolicySchema = Joi.object().keys({
   group: Joi.string(),
   groups: Joi.array().items(Joi.string()),
   memberLevel: MemberLevelPolicySchema,
@@ -1046,9 +1145,7 @@ const RolePolicySchema = Joi.object().keys({
   })),
 })
   .nand('group', 'groups') // Cannot have both group and groups
-  .nand('role', 'group') // Cannot have both role and group
-  .nand('role', 'groups') // Cannot have both role and groups
-  .or('role', 'group', 'groups') // Must have at least one
+  .or('group', 'groups') // Must have at least one
   .with('memberMasking', 'memberLevel'); // memberMasking requires memberLevel
 
 /* *****************************
@@ -1103,7 +1200,7 @@ const baseSchema = {
   dimensions: DimensionsSchema,
   segments: SegmentsSchema,
   preAggregations: PreAggregationsAlternatives,
-  accessPolicy: Joi.array().items(RolePolicySchema.required()),
+  accessPolicy: Joi.array().items(GroupPolicySchema.required()),
   hierarchies: hierarchySchema,
 };
 
@@ -1131,7 +1228,52 @@ const folderSchema = Joi.object().keys({
   ]).required(),
 }).id('folderSchema');
 
-const ViewFilterSchema = Joi.object().keys({
+// A view group's `includes`: a function, or an array of view references
+// (string/function) and nested view group definitions (resolved via the shared
+// `#nestedViewGroupSchema` link). Shared between the top-level and nested
+// schemas; the nested schema makes it `.required()`.
+const viewGroupIncludesSchema = Joi.alternatives([
+  Joi.func(),
+  Joi.array().items(
+    Joi.alternatives([
+      Joi.string().required(),
+      Joi.func(),
+      Joi.link('#nestedViewGroupSchema'), // Can contain nested view groups
+    ]),
+  ),
+]);
+
+// A nested view group authored inside another group's `includes`. Unlike a
+// top-level group, it MUST use `includes` (no legacy `views`), and `fileName`
+// is meaningless here, so neither is accepted. Enforcing this at validation
+// time prevents nested groups from being silently dropped by the evaluator.
+const nestedViewGroupSchema = Joi.object().keys({
+  name: Joi.string().required(),
+  title: Joi.string(),
+  description: Joi.string(),
+  includes: viewGroupIncludesSchema.required(),
+})
+  .id('nestedViewGroupSchema');
+
+const viewGroupSchema = Joi.object().keys({
+  name: Joi.string().required(),
+  title: Joi.string(),
+  description: Joi.string(),
+  // Legacy way of including views into a group, kept for backward compatibility.
+  views: Joi.alternatives([Joi.array().items(Joi.string().required()), Joi.func()]),
+  // Preferred way of including views (and nested view groups) into a group.
+  includes: viewGroupIncludesSchema,
+  fileName: Joi.string(),
+})
+  .oxor('views', 'includes')
+  .messages({
+    'object.oxor': 'View group must use either "views" or "includes", but not both'
+  })
+  // Register the nested schema so the `#nestedViewGroupSchema` link above resolves.
+  .shared(nestedViewGroupSchema)
+  .id('viewGroupSchema');
+
+const ViewDefaultFilterSchema = Joi.object().keys({
   member: Joi.func().required(),
   operator: Joi.any().valid(
     'equals',
@@ -1196,7 +1338,7 @@ const viewSchema = inherit(baseSchema, {
     })
   ),
   folders: Joi.array().items(folderSchema),
-  filters: Joi.array().items(ViewFilterSchema),
+  defaultFilters: Joi.array().items(ViewDefaultFilterSchema),
 });
 
 function formatErrorMessageFromDetails(explain, d) {
@@ -1279,15 +1421,59 @@ export class CubeValidator implements CompilerInterface {
     };
     const result = cube.isView ? viewSchema.validate(cube, options) : cubeSchema.validate(cube, options);
 
+    let valid = result.error == null;
+
     if (cube.isView) {
       // We need to verify that leaf cubes in view are present only once
       this.validateUniqueLeafCubes(cube.name, cube.cubes, errorReporter);
+    } else if (!this.validateGranularitySql(cube, errorReporter)) {
+      valid = false;
     }
 
     if (result.error != null) {
       errorReporter.error(formatErrorMessage(result.error));
-    } else {
+    }
+
+    if (valid) {
       this.validCubes.set(cube.name, true);
+    }
+
+    return result;
+  }
+
+  // Reported outside the cube schema so the message stands on its own: a
+  // granularity rejected by the schema is listed among the reasons every other
+  // dimension alternative failed, which buries it.
+  private validateGranularitySql(cube, errorReporter: ErrorReporter): boolean {
+    let valid = true;
+
+    for (const [dimensionName, dimension] of Object.entries<any>(cube.dimensions || {})) {
+      for (const [name, granularity] of Object.entries<any>(dimension?.granularities || {})) {
+        // Predefined names are resolved case-insensitively, so `Week` names a
+        // granularity that resolves and must keep doing so.
+        if (granularity?.sql && !isPredefinedGranularity(name.toLowerCase())) {
+          errorReporter.error(
+            `dimensions.${dimensionName}.granularities.${name}: a granularity defined with 'sql' must be named after one of the predefined granularities (${PREDEFINED_GRANULARITY_NAMES.join(', ')}). Define '${name}' with 'interval' instead`
+          );
+          valid = false;
+        }
+      }
+    }
+
+    return valid;
+  }
+
+  public validateViewGroup(viewGroup, errorReporter: ErrorReporter) {
+    const options = {
+      nonEnumerables: true,
+      abortEarly: false, // This will allow all errors to be reported, not just the first one
+    };
+    const result = viewGroupSchema.validate(viewGroup, options);
+
+    if (result.error != null) {
+      errorReporter
+        .inContext(`${viewGroup?.name} view group`)
+        .error(formatErrorMessage(result.error));
     }
 
     return result;

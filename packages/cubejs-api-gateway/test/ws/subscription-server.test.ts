@@ -12,6 +12,7 @@ const createMocks = () => {
     sql: jest.fn().mockResolvedValue(undefined),
     dryRun: jest.fn().mockResolvedValue(undefined),
     meta: jest.fn().mockResolvedValue(undefined),
+    metaExtended: jest.fn().mockResolvedValue(undefined),
     subscribe: jest.fn().mockResolvedValue(undefined),
   };
 
@@ -242,6 +243,8 @@ describe('SubscriptionServer', () => {
     });
 
     it('should call meta method correctly', async () => {
+      // The fork always routes the WS 'meta' method to apiGateway.metaExtended so that
+      // preAggregations are included in the response (see gateway.ts metaExtended).
       const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
       const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
 
@@ -251,12 +254,63 @@ describe('SubscriptionServer', () => {
       };
       await server.processMessage('conn-1', JSON.stringify(message));
 
-      expect(mockApiGateway.meta).toHaveBeenCalledWith(
+      expect(mockApiGateway.metaExtended).toHaveBeenCalledWith(
         expect.objectContaining({
           connectionId: 'conn-1',
           apiType: 'ws',
         })
       );
+    });
+
+    it('should forward onlyViews param for meta', async () => {
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
+
+      const message = {
+        method: 'meta',
+        messageId: '123',
+        params: { onlyViews: true }
+      };
+      await server.processMessage('conn-1', JSON.stringify(message));
+
+      expect(mockApiGateway.handleError).not.toHaveBeenCalled();
+      expect(mockApiGateway.metaExtended).toHaveBeenCalledWith(
+        expect.objectContaining({
+          onlyViews: true,
+          connectionId: 'conn-1',
+          apiType: 'ws',
+        })
+      );
+    });
+
+    it('should reject a non-boolean onlyViews param for meta', async () => {
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
+
+      const message = {
+        method: 'meta',
+        messageId: '123',
+        params: { onlyViews: 'true' }
+      };
+      await server.processMessage('conn-1', JSON.stringify(message));
+
+      expect(mockApiGateway.meta).not.toHaveBeenCalled();
+      expect(mockApiGateway.handleError).toHaveBeenCalled();
+    });
+
+    it('should still reject unknown meta params', async () => {
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
+
+      const message = {
+        method: 'meta',
+        messageId: '123',
+        params: { somethingElse: true }
+      };
+      await server.processMessage('conn-1', JSON.stringify(message));
+
+      expect(mockApiGateway.meta).not.toHaveBeenCalled();
+      expect(mockApiGateway.handleError).toHaveBeenCalled();
     });
 
     it('should forward cache param as cacheMode for load', async () => {

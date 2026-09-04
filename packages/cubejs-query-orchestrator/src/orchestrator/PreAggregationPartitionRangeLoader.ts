@@ -12,7 +12,7 @@ import {
   parseUtcIntoLocalDate,
   LoggerFn,
 } from '@cubejs-backend/shared';
-import { InlineTable, TableStructure } from '@cubejs-backend/base-driver';
+import { InlineTable, QueuePriority, TableStructure } from '@cubejs-backend/base-driver';
 import { DriverFactory } from './DriverFactory';
 import { QueryCache, QueryWithParams } from './QueryCache';
 import {
@@ -86,10 +86,7 @@ export class PreAggregationPartitionRangeLoader {
 
   private async loadRangeQuery(rangeQuery: QueryWithParams, partitionRange?: QueryDateRange) {
     const [query, values, queryOptions]: QueryWithParams = rangeQuery;
-    const invalidate =
-      this.preAggregation.invalidateKeyQueries?.[0]
-        ? this.preAggregation.invalidateKeyQueries[0].slice(0, 2)
-        : false;
+    const invalidate = QueryCache.buildRangeInvalidateKey(this.preAggregation);
 
     return this.queryCache.cacheQueryResult(
       query,
@@ -104,7 +101,7 @@ export class PreAggregationPartitionRangeLoader {
         renewalThreshold: this.queryCache.options.refreshKeyRenewalThreshold
           || queryOptions?.renewalThreshold || 24 * 60 * 60,
         waitForRenew: this.waitForRenew,
-        priority: this.priority(10),
+        priority: this.priority(QueuePriority.Interactive),
         requestId: this.requestId,
         dataSource: this.dataSource,
         useInMemory: true,
@@ -122,7 +119,7 @@ export class PreAggregationPartitionRangeLoader {
       (this.preAggregation.invalidateKeyQueries || []).map(
         (sqlQuery) => (
           this.loadCache.keyQueryResult(
-            this.replacePartitionSqlAndParams(sqlQuery, range, partitionTableName), this.waitForRenew, this.priority(10)
+            this.replacePartitionSqlAndParams(sqlQuery, range, partitionTableName), this.waitForRenew, this.priority(QueuePriority.Interactive)
           )
         )
       )
@@ -396,6 +393,7 @@ export class PreAggregationPartitionRangeLoader {
       {
         requestId: this.requestId,
         skipRefreshKeyWaitForRenew: false,
+        priority: this.priority(QueuePriority.Interactive),
         dataSource: this.dataSource,
         external: false,
         useCsvQuery: true,

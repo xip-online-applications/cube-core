@@ -1,4 +1,5 @@
-use crate::planner::{MeasureTimeShifts, MemberSymbol};
+use crate::planner::{MeasureTimeShifts, MemberSymbol, MultiStageGrain};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Description of the time-series CTE driving a rolling-window
@@ -8,6 +9,16 @@ use std::rc::Rc;
 pub struct TimeSeriesDescription {
     pub time_dimension: Rc<MemberSymbol>,
     pub date_range_cte: Option<String>,
+    /// Granularities of the `to_date` rolling windows driven by this series
+    /// whose period boundary is a calendar column rather than interval math.
+    /// The series carries one boundary column per granularity, and the list
+    /// grows as further rolling windows attach to the same series.
+    ///
+    /// Load-bearing: every description is built before any is planned, so a
+    /// window registering here is always visible to the series. Planning a
+    /// description as soon as it is built would drop the boundary columns of
+    /// every window registered after it.
+    pub calendar_period_granularities: Rc<RefCell<Vec<String>>>,
 }
 
 /// Kind of leaf CTE in a multi-stage chain: a base measure query,
@@ -37,12 +48,11 @@ pub struct ToDateRollingWindow {
 }
 
 /// Flavour of rolling-window computation: regular trailing/leading
-/// window, to-date window, or a running-total accumulation.
+/// window or a to-date window.
 #[derive(Clone)]
 pub enum RollingWindowType {
     Regular(RegularRollingWindow),
     ToDate(ToDateRollingWindow),
-    RunningTotal,
 }
 
 /// Planner-side description of a rolling window: the time
@@ -86,17 +96,6 @@ impl RollingWindowDescription {
             rolling_window: RollingWindowType::ToDate(ToDateRollingWindow { granularity }),
         }
     }
-
-    pub fn new_running_total(
-        time_dimension: Rc<MemberSymbol>,
-        base_time_dimension: Rc<MemberSymbol>,
-    ) -> Self {
-        Self {
-            time_dimension,
-            base_time_dimension,
-            rolling_window: RollingWindowType::RunningTotal,
-        }
-    }
 }
 
 /// Semantic shape of a non-leaf multi-stage CTE: a rank window,
@@ -113,63 +112,50 @@ pub enum MultiStageInodeMemberType {
 
 /// Non-leaf node in a multi-stage tree. Bundles the semantic
 /// `inode_type` (Rank / Aggregate / Calculate / Dimension /
-/// RollingWindow) with the partition-shaping flags driven by the
-/// measure's data-model directives: `reduce_by`, `add_group_by`,
-/// `group_by`, `time_shift`.
+/// RollingWindow) with the partition-shaping `grain` carried over from
+/// the measure's data-model directives and an optional `time_shift`.
 #[derive(Clone)]
 pub struct MultiStageInodeMember {
     inode_type: MultiStageInodeMemberType,
-    reduce_by: Vec<Rc<MemberSymbol>>,
-    add_group_by: Vec<Rc<MemberSymbol>>,
-    group_by: Option<Vec<Rc<MemberSymbol>>>,
+    grain: MultiStageGrain,
     time_shift: Option<MeasureTimeShifts>,
+    /// Optimisation flag: this Aggregate inode is a safe candidate for
+    /// the `window`-based render — single measure dep, additive identity
+    /// rollup, no leaf-extending modifiers. When `true`, assembly skips
+    /// the JOIN-model and `member_query_planner` emits a window function.
+    /// Default `false`.
+    use_window_path: bool,
 }
 
 impl MultiStageInodeMember {
     pub fn new(
         inode_type: MultiStageInodeMemberType,
-        reduce_by: Vec<Rc<MemberSymbol>>,
-        add_group_by: Vec<Rc<MemberSymbol>>,
-        group_by: Option<Vec<Rc<MemberSymbol>>>,
+        grain: MultiStageGrain,
         time_shift: Option<MeasureTimeShifts>,
     ) -> Self {
         Self {
             inode_type,
-            reduce_by,
-            add_group_by,
-            group_by,
+            grain,
             time_shift,
+            use_window_path: false,
         }
+    }
+
+    pub fn with_use_window_path(mut self, value: bool) -> Self {
+        self.use_window_path = value;
+        self
+    }
+
+    pub fn use_window_path(&self) -> bool {
+        self.use_window_path
     }
 
     pub fn inode_type(&self) -> &MultiStageInodeMemberType {
         &self.inode_type
     }
 
-    pub fn reduce_by(&self) -> Vec<String> {
-        self.reduce_by.iter().map(|s| s.full_name()).collect()
-    }
-
-    pub fn add_group_by(&self) -> Vec<String> {
-        self.add_group_by.iter().map(|s| s.full_name()).collect()
-    }
-
-    pub fn reduce_by_symbols(&self) -> &Vec<Rc<MemberSymbol>> {
-        &self.reduce_by
-    }
-
-    pub fn add_group_by_symbols(&self) -> &Vec<Rc<MemberSymbol>> {
-        &self.add_group_by
-    }
-
-    pub fn group_by(&self) -> Option<Vec<String>> {
-        self.group_by
-            .as_ref()
-            .map(|g| g.iter().map(|s| s.full_name()).collect())
-    }
-
-    pub fn group_by_symbols(&self) -> &Option<Vec<Rc<MemberSymbol>>> {
-        &self.group_by
+    pub fn grain(&self) -> &MultiStageGrain {
+        &self.grain
     }
 
     pub fn time_shift(&self) -> &Option<MeasureTimeShifts> {

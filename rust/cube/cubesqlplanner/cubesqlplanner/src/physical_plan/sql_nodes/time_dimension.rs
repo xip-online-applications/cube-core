@@ -5,27 +5,18 @@ use crate::planner::sql_templates::PlanSqlTemplates;
 use crate::planner::MemberSymbol;
 use cubenativeutils::CubeError;
 use std::any::Any;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 /// Renders a time dimension: applies the granularity (predefined
-/// or calendar SQL) and timezone conversion, unless the dimension's
-/// full name is listed in `dimensions_with_ignored_timezone` (used
-/// for pre-aggregation column references).
+/// or calendar SQL) and timezone conversion, unless the symbol is
+/// marked as already timezone-converted.
 pub struct TimeDimensionNode {
-    dimensions_with_ignored_timezone: HashSet<String>,
     input: Rc<dyn SqlNode>,
 }
 
 impl TimeDimensionNode {
-    pub fn new(
-        dimensions_with_ignored_timezone: HashSet<String>,
-        input: Rc<dyn SqlNode>,
-    ) -> Rc<Self> {
-        Rc::new(Self {
-            dimensions_with_ignored_timezone,
-            input,
-        })
+    pub fn new(input: Rc<dyn SqlNode>) -> Rc<Self> {
+        Rc::new(Self { input })
     }
 }
 
@@ -62,11 +53,7 @@ impl SqlNode for TimeDimensionNode {
                         node_processor.clone(),
                         templates,
                     )?;
-                    let skip_convert_tz = self
-                        .dimensions_with_ignored_timezone
-                        .contains(&ev.full_name());
-
-                    let converted_tz = if skip_convert_tz {
+                    let converted_tz = if ev.tz_converted_at_source() {
                         input_sql
                     } else {
                         templates.convert_tz(input_sql)?
@@ -84,9 +71,15 @@ impl SqlNode for TimeDimensionNode {
                 }
             }
             MemberSymbol::Dimension(ev) => {
+                // Only the cube owning the column reads it from the database, so
+                // only there is a conversion needed. A dimension that merely
+                // references another one renders through the owning symbol,
+                // which converts on its own; converting here as well would
+                // shift the value twice.
                 let wraps_convert_tz = !visitor.ignore_tz_convert()
                     && query_tools.convert_tz_for_raw_time_dimension()
-                    && ev.dimension_type() == "time";
+                    && ev.dimension_type() == "time"
+                    && ev.owned_by_cube();
                 if wraps_convert_tz {
                     let inner_visitor = visitor.with_arg_needs_paren_safe(false);
                     let input_sql = self.input.to_sql(

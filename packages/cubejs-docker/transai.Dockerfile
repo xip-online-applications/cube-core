@@ -76,8 +76,8 @@ COPY packages/cubejs-event-emitter/ packages/cubejs-event-emitter/
 # Backend Rust components
 COPY rust/cube/cubenativeutils/ rust/cube/cubenativeutils/
 COPY rust/cube/cubeshared/ rust/cube/cubeshared/
-COPY rust/cubeorchestrator/ rust/cubeorchestrator/
-COPY rust/cubesqlplanner/ rust/cubesqlplanner/
+COPY rust/cube/cubeorchestrator/ rust/cube/cubeorchestrator/
+COPY rust/cube/cubesqlplanner/ rust/cube/cubesqlplanner/
 COPY rust/cubestore/ rust/cubestore/
 COPY rust/cubesql/ rust/cubesql/
 

@@ -4,25 +4,55 @@ use cubenativeutils::CubeError;
 
 impl FilterOperationSql for LikeOp {
     fn to_sql(&self, ctx: &FilterSqlContext) -> Result<String, CubeError> {
-        let allocated = ctx.allocate_and_cast_values(
-            &self
-                .values
-                .iter()
-                .map(|v| Some(v.clone()))
-                .collect::<Vec<_>>(),
-            &self.member_type,
-        )?;
+        let escape_char = ctx.plan_templates.like_escape_char()?;
+        let allocated = self
+            .values
+            .iter()
+            .map(|value| {
+                let escaped = escape_char
+                    .map(|character| escape_like_pattern(value, character))
+                    .unwrap_or_else(|| value.clone());
+                ctx.allocate_and_cast_str(&escaped, &self.member_type)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let column_expr = if self.case_insensitive_upper {
+            ctx.plan_templates.scalar_function(
+                "UPPER".to_string(),
+                vec![ctx.member_sql().to_string()],
+                None,
+                None,
+            )?
+        } else {
+            ctx.member_sql().to_string()
+        };
 
         let like_parts = allocated
             .into_iter()
             .map(|v| {
-                ctx.plan_templates.ilike(
-                    ctx.member_sql,
-                    &v,
-                    self.start_wild,
-                    self.end_wild,
-                    self.negated,
-                )
+                let value_expr = if self.case_insensitive_upper {
+                    ctx.plan_templates
+                        .scalar_function("UPPER".to_string(), vec![v], None, None)?
+                } else {
+                    v
+                };
+                if self.case_insensitive_upper {
+                    ctx.plan_templates.like(
+                        &column_expr,
+                        &value_expr,
+                        self.start_wild,
+                        self.end_wild,
+                        self.negated,
+                    )
+                } else {
+                    ctx.plan_templates.ilike(
+                        &column_expr,
+                        &value_expr,
+                        self.start_wild,
+                        self.end_wild,
+                        self.negated,
+                    )
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -34,7 +64,7 @@ impl FilterOperationSql for LikeOp {
         };
         let null_check = if need_null_check {
             ctx.plan_templates
-                .or_is_null_check(ctx.member_sql.to_string())?
+                .or_is_null_check(ctx.member_sql().to_string())?
         } else {
             "".to_string()
         };
@@ -45,4 +75,15 @@ impl FilterOperationSql for LikeOp {
             null_check
         ))
     }
+}
+
+fn escape_like_pattern(value: &str, escape_char: char) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character == escape_char || matches!(character, '%' | '_') {
+            escaped.push(escape_char);
+        }
+        escaped.push(character);
+    }
+    escaped
 }
