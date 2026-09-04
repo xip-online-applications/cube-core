@@ -6,11 +6,11 @@
 !yarn.lock
 !lerna.json
 !packages/
-!rust/cubenativeutils/
-!rust/cubeorchestrator/
-!rust/cubesqlplanner/
+!rust/cube/cubenativeutils/
+!rust/cube/cubeshared/
+!rust/cube/cubeorchestrator/
+!rust/cube/cubesqlplanner/
 !rust/cubesql/
-!rust/cubeshared/
 !rust/cubestore/
 !rust/cubestore/js-wrapper/
 !rust/cubestore/tsconfig.json

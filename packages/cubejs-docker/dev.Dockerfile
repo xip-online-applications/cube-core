@@ -114,8 +114,8 @@ RUN yarn install
 # Backend
 COPY rust/cube/cubenativeutils/ rust/cube/cubenativeutils/
 COPY rust/cube/cubeshared/ rust/cube/cubeshared/
-COPY rust/cubeorchestrator/ rust/cubeorchestrator/
-COPY rust/cubesqlplanner/ rust/cubesqlplanner/
+COPY rust/cube/cubeorchestrator/ rust/cube/cubeorchestrator/
+COPY rust/cube/cubesqlplanner/ rust/cube/cubesqlplanner/
 COPY rust/cubestore/ rust/cubestore/
 COPY rust/cubesql/ rust/cubesql/
 COPY packages/cubejs-backend-shared/ packages/cubejs-backend-shared/
