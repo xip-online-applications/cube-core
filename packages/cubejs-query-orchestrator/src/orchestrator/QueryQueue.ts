@@ -61,12 +61,6 @@ export type QueryQueueOptions = {
   skipQueue?: boolean,
 };
 
-function tenantIdFromQueryDef(query: QueryDef): string {
-  return query.query?.requestContext?.securityContext?.tenantId
-    || query.query?.context?.securityContext?.tenantId
-    || 'unknown';
-}
-
 function factoryQueueDriver(cacheAndQueueDriver: string, queueDriverOptions): QueueDriverInterface {
   switch (cacheAndQueueDriver || 'memory') {
     case 'memory':
@@ -867,7 +861,7 @@ export class QueryQueue {
       let localCancelHandler: unknown = null;
       const startQueryTime = (new Date()).getTime();
       const timeInQueue = (new Date()).getTime() - query.addedToQueueTime;
-      const tenantIdentifier = tenantIdFromQueryDef(query);
+      const tenantIdentifier = query.tenantId || 'unknown';
 
       Tracer.init().get().timing('time_in_queue', timeInQueue, {
         tenant: tenantIdentifier,
