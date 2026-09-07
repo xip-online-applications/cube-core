@@ -40,6 +40,7 @@ export type CacheQueryResultOptions = {
   priority?: number,
   external?: boolean,
   requestId?: string,
+  tenantId?: string,
   dataSource: string,
   waitForRenew?: boolean,
   forceNoCache?: boolean,
@@ -123,6 +124,7 @@ export type QueryBody = {
   scheduledRefresh?: boolean;
   cacheMode?: CacheMode;
   requestId?: string;
+  tenantId?: string;
   requestContext?: any;
   external?: boolean;
   isJob?: boolean;
@@ -343,6 +345,7 @@ export class QueryCache {
             priority: queuePriority,
             external: queryBody.external,
             requestId: queryBody.requestId,
+            tenantId: queryBody.tenantId,
             persistent: queryBody.persistent,
             dataSource: queryBody.dataSource,
             useCsvQuery: queryBody.useCsvQuery,
@@ -360,6 +363,7 @@ export class QueryCache {
               priority: queuePriority,
               external: queryBody.external,
               requestId: queryBody.requestId,
+              tenantId: queryBody.tenantId,
               dataSource: queryBody.dataSource,
               persistent: queryBody.persistent,
               inlineTables,
@@ -383,6 +387,7 @@ export class QueryCache {
           priority: queuePriority,
           external: queryBody.external,
           requestId: queryBody.requestId,
+          tenantId: queryBody.tenantId,
           dataSource: queryBody.dataSource,
           persistent: queryBody.persistent,
           skipRefreshKeyWaitForRenew: true,
@@ -403,6 +408,7 @@ export class QueryCache {
           priority: queuePriority,
           external: queryBody.external,
           requestId: queryBody.requestId,
+          tenantId: queryBody.tenantId,
           dataSource: queryBody.dataSource,
           persistent: queryBody.persistent,
           skipRefreshKeyWaitForRenew: true,
@@ -423,6 +429,7 @@ export class QueryCache {
         {
           external: queryBody.external,
           requestId: queryBody.requestId,
+          tenantId: queryBody.tenantId,
           dataSource: queryBody.dataSource,
           persistent: queryBody.persistent,
         }
@@ -443,6 +450,7 @@ export class QueryCache {
         forceNoCache,
         external: queryBody.external,
         requestId: queryBody.requestId,
+        tenantId: queryBody.tenantId,
         dataSource: queryBody.dataSource,
         persistent: queryBody.persistent,
       }
@@ -459,6 +467,7 @@ export class QueryCache {
         {
           external: queryBody.external,
           requestId: queryBody.requestId,
+          tenantId: queryBody.tenantId,
           dataSource: queryBody.dataSource,
           persistent: queryBody.persistent,
         }
@@ -613,6 +622,7 @@ export class QueryCache {
       external,
       priority,
       requestId,
+      tenantId,
       spanId,
       inlineTables,
       useCsvQuery,
@@ -625,6 +635,7 @@ export class QueryCache {
       external: boolean,
       priority?: number,
       requestId?: string,
+      tenantId?: string,
       spanId?: string,
       inlineTables?: InlineTables,
       useCsvQuery?: boolean,
@@ -642,6 +653,7 @@ export class QueryCache {
       query,
       values,
       requestId,
+      tenantId,
       inlineTables,
       useCsvQuery,
       lambdaTypes,
@@ -907,6 +919,7 @@ export class QueryCache {
     renewalThreshold: any,
     options: {
       requestId?: string,
+      tenantId?: string,
       skipRefreshKeyWaitForRenew?: boolean,
       external?: boolean,
       dataSource: string,
@@ -942,6 +955,7 @@ export class QueryCache {
     renewalThreshold: any,
     options: {
       requestId?: string,
+      tenantId?: string,
       skipRefreshKeyWaitForRenew?: boolean,
       priority?: number,
       external?: boolean,
@@ -983,6 +997,7 @@ export class QueryCache {
               priority: options.priority,
               external: options.external,
               requestId: options.requestId,
+              tenantId: options.tenantId,
               dataSource: options.dataSource,
               useCsvQuery: options.useCsvQuery,
               lambdaTypes: options.lambdaTypes,
@@ -1141,6 +1156,7 @@ export class QueryCache {
       priority: options.priority,
       external: options.external,
       requestId: options.requestId,
+      tenantId: options.tenantId,
       spanId,
       persistent: options.persistent,
       dataSource: options.dataSource,

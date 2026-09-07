@@ -19,6 +19,16 @@ export interface OrchestratorApiOptions extends QueryOrchestratorOptions {
   redisPrefix?: string;
 }
 
+// `data` is either a single result `{ data: [...rows], dataSource, ... }`
+// or, for multi-datasource queries, an array of such results.
+function rowCountFromResult(result: any): number {
+  if (Array.isArray(result)) {
+    return result.reduce((sum, item) => sum + (Array.isArray(item?.data) ? item.data.length : 0), 0);
+  }
+
+  return Array.isArray(result?.data) ? result.data.length : 0;
+}
+
 export class OrchestratorApi {
   private seenDataSources: Record<string, boolean> = {};
 
@@ -79,6 +89,10 @@ export class OrchestratorApi {
     const startQueryTime = (new Date()).getTime();
     const securityContext = query.requestContext?.securityContext || query.context?.securityContext;
     const tenantIdentifier = securityContext?.tenantId || 'unknown';
+    // Stamped onto the query body so it survives the trip through QueryCache/QueryQueue,
+    // which otherwise strip requestContext down to a handful of whitelisted fields
+    // (see QueryCache.queryWithRetryAndRelease) before a query reaches the queue.
+    query.tenantId = tenantIdentifier;
 
     try {
       this.logger('Query started', {
@@ -108,6 +122,10 @@ export class OrchestratorApi {
         query: queryForLog,
         params: query.values,
         requestId: query.requestId
+      });
+
+      Tracer.init().get().histogram('resultset_rows', rowCountFromResult(data), {
+        tenant: tenantIdentifier,
       });
 
       if (Array.isArray(data)) {
@@ -155,6 +173,10 @@ export class OrchestratorApi {
           });
 
           Tracer.init().get().increment('slow_query', 1, {
+            tenant: tenantIdentifier,
+          });
+
+          Tracer.init().get().histogram('resultset_rows', rowCountFromResult(fromCache), {
             tenant: tenantIdentifier,
           });
 
