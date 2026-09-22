@@ -195,7 +195,8 @@ function castResultDataInPlace(result: any): void {
  * types instead of the legacy all-strings wire format.
  */
 function castFinalResultBuffer(buffer: ArrayBuffer | Buffer): Buffer {
-  const json = JSON.parse(Buffer.from(buffer).toString('utf8'));
+  const bufferView = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  const json = JSON.parse(bufferView.toString('utf8'));
 
   if (Array.isArray(json?.results)) {
     for (const result of json.results) {
