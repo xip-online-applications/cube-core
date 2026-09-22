@@ -172,11 +172,6 @@ COPY packages/cubejs-client-ws-transport/ packages/cubejs-client-ws-transport/
 COPY packages/cubejs-playground/ packages/cubejs-playground/
 
 RUN yarn build
-# rust/cubestore lives outside the packages/* glob, and lerna's Nx-powered task
-# scheduling doesn't reliably order it before packages/cubejs-cubestore-driver
-# (which imports its compiled type declarations) in `yarn lerna run build`
-# below - build it explicitly first so its dist/ is always ready.
-RUN yarn --cwd rust/cubestore build
 RUN yarn lerna run build
 RUN yarn --cwd packages/cubejs-backend-native native:build-release
 
