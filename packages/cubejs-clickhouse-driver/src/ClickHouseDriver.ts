@@ -4,6 +4,7 @@ import {
   extractRequestUUID,
   formatMySql,
 } from '@cubejs-backend/shared';
+import type { LogLevel } from '@cubejs-backend/shared';
 import {
   BaseDriver,
   DownloadQueryResultsOptions,
@@ -22,12 +23,21 @@ import {
   UnloadOptions,
 } from '@cubejs-backend/base-driver';
 
-import { Readable } from 'node:stream';
-import { ClickHouseClient, createClient } from '@clickhouse/client';
-import type { ClickHouseSettings, ResponseJSON } from '@clickhouse/client';
+import { ClickHouseClient, ClickHouseLogLevel, createClient } from '@clickhouse/client';
+import type {
+  ClickHouseSettings,
+  ErrorLogParams,
+  LogParams,
+  Logger,
+  ResponseJSON,
+  WarnLogParams,
+} from '@clickhouse/client';
 import { v4 as uuidv4 } from 'uuid';
 
-import { transformRow, transformStreamRow } from './HydrationStream';
+import { version } from '../package.json';
+
+import { ClickHouseRowStream } from './RowStream';
+import { buildTransformFromMeta, transformRow } from './Transform';
 import { formatError } from './utils';
 
 const SUPPORTED_BUCKET_TYPES = ['s3'];
@@ -187,9 +197,14 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
         /// Let's disable it, because we don't need them.
         send_progress_in_http_headers: 0,
         // If ClickHouse user's permissions are restricted with "readonly = 1",
-        // change settings queries are not allowed. Thus, "join_use_nulls" setting
-        // can not be changed
-        ...(this.readOnlyMode ? {} : { join_use_nulls: 1 }),
+        // change settings queries are not allowed
+        ...(this.readOnlyMode ? {} : {
+          join_use_nulls: 1,
+          // Pins every DateTime value to the width its column type implies, which is what the
+          // specialized converters in Transform.ts key off. Not guaranteed: a readonly user or a
+          // driver_factory override still lands on the generic formatter.
+          date_time_output_format: 'simple',
+        }),
       },
       // Custom HTTP headers can only be passed via driver_factory, not env vars.
       headers: config.headers ?? {},
@@ -232,6 +247,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       abortController.abort();
       // Use separate client for kill query, usual pool may be busy
       const killClient = this.createClient(1);
+
       try {
         await killClient.command({
           query: formatMySql('KILL QUERY WHERE query_id = ?', [queryId]),
@@ -255,7 +271,53 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       request_timeout: this.config.requestTimeout,
       max_open_connections: maxPoolSize,
       http_headers: this.config.headers,
+      application: `CubeDev_Cube/${version}`,
+      log: {
+        LoggerClass: this.clientLoggerClass(),
+        // At WARN the client advises enabling progress headers on every construction,
+        // which we disable on purpose.
+        level: ClickHouseLogLevel.ERROR,
+      },
     });
+  }
+
+  /**
+   * The client instantiates `LoggerClass` with no arguments, and `setLogger` runs
+   * after the constructor, so the Cube logger is resolved lazily on every call.
+   */
+  private clientLoggerClass(): new () => Logger {
+    const emit = (level: LogLevel, { module, message, args }: LogParams, err?: Error) => {
+      this.logger?.('ClickHouse Client Log', {
+        ...args,
+        level,
+        module,
+        message,
+        ...(err ? { error: (err.stack || err).toString() } : {}),
+      });
+    };
+
+    return class implements Logger {
+      public trace(params: LogParams) {
+        emit('trace', params);
+      }
+
+      // Cube's LogLevel has no debug counterpart
+      public debug(params: LogParams) {
+        emit('trace', params);
+      }
+
+      public info(params: LogParams) {
+        emit('info', params);
+      }
+
+      public warn(params: WarnLogParams) {
+        emit('warn', params, params.err);
+      }
+
+      public error(params: ErrorLogParams) {
+        emit('error', params, params.err);
+      }
+    };
   }
 
   public async testConnection() {
@@ -273,12 +335,14 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
     return this.normaliseResponse(response);
   }
 
-  protected queryResponse(query: string, values: unknown[], options?: QueryOptions): Promise<ResponseJSON<Record<string, unknown>>> {
+  protected queryResponse(query: string, values: unknown[], options?: QueryOptions): Promise<ResponseJSON<Array<unknown>>> {
     const formattedQuery = formatMySql(query, values);
 
     return this.withCancel(async (connection, queryId, signal) => {
       try {
-        const format = 'JSON';
+        // Positional rows drop the repeated column names and share the transform with `stream()`;
+        // ClickHouse serializes cell values identically in JSON and JSONCompact.
+        const format = 'JSONCompact';
 
         const resultSet = await connection.query({
           query: formattedQuery,
@@ -294,8 +358,16 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
           throw new Error(`Unexpected x-clickhouse-format in response: expected ${format}, received ${resultSet.response_headers['x-clickhouse-format']}`);
         }
 
-        // We used format JSON, so we expect each row to be Record with column names as keys
-        const results = await resultSet.json<Record<string, unknown>>();
+        const results = await resultSet.json<Array<unknown>>();
+
+        // Up to ClickHouse 25.x, failures after the first flushed block are appended to a 200
+        // response; newer versions truncate the JSON and are rejected while parsing it above.
+        // The client declares `exception` for `JSONEachRowWithProgress` rows only, never here.
+        const { exception } = results as { exception?: string };
+        if (exception) {
+          throw new Error(`ClickHouse aborted after ${results.data?.length ?? 0} row(s): ${exception}`);
+        }
+
         return results;
       } catch (e) {
         throw new Error(`Query failed: ${formatError(e)}; query id: ${queryId}`, { cause: e });
@@ -303,19 +375,25 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
     }, options);
   }
 
-  protected normaliseResponse<R = unknown>(res: ResponseJSON<Record<string, unknown>>): Array<R> {
-    if (res.data) {
-      const meta = (res.meta ?? []).reduce<Record<string, { name: string; type: string; }>>(
-        (state, element) => ({ [element.name]: element, ...state }),
-        {}
-      );
-
-      // TODO maybe use row-based format here as well?
-      res.data.forEach((row) => {
-        transformRow(row, meta);
-      });
+  protected normaliseResponse<R = unknown>(res: ResponseJSON<Array<unknown>>): Array<R> {
+    const { data } = res;
+    if (!data || data.length === 0) {
+      return [];
     }
-    return res.data as Array<R>;
+
+    if (!res.meta) {
+      throw new Error('Unexpected response without meta for format JSONCompact');
+    }
+
+    const transform = buildTransformFromMeta(res.meta);
+
+    const rows: Array<R> = new Array(data.length);
+
+    for (let i = 0; i < data.length; i++) {
+      rows[i] = transformRow(data[i] as Array<unknown>, transform) as R;
+    }
+
+    return rows;
   }
 
   public async release() {
@@ -370,7 +448,6 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
   public async stream(
     query: string,
     values: unknown[],
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     { highWaterMark, requestId }: StreamOptions
   ): Promise<StreamTableDataWithTypes> {
     // Use separate client for this long-living query
@@ -396,40 +473,11 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
       // Array<unknown> is okay, because we use fixed JSONCompactEachRowWithNamesAndTypes format
       // And each row after first two will look like this: [42, "hello", [0,1]]
       // https://clickhouse.com/docs/en/interfaces/formats#jsoncompacteachrowwithnamesandtypes
-      const resultSetStream = resultSet.stream<Array<unknown>>();
-
-      const allRowsIter = (async function* allRowsIter() {
-        for await (const rowsBatch of resultSetStream) {
-          for (const row of rowsBatch) {
-            yield row.json();
-          }
-        }
-      }());
-
-      const first = await allRowsIter.next();
-      if (first.done) {
-        throw new Error('Unexpected stream end before row with names');
-      }
-      // JSONCompactEachRowWithNamesAndTypes: expect first row to be column names as string
-      const names = first.value as Array<string>;
-
-      const second = await allRowsIter.next();
-      if (second.done) {
-        throw new Error('Unexpected stream end before row with types');
-      }
-      // JSONCompactEachRowWithNamesAndTypes: expect first row to be column names as string
-      const types = second.value as Array<string>;
-
-      if (names.length !== types.length) {
-        throw new Error(`Unexpected names and types length mismatch; names ${names.length} vs types ${types.length}`);
-      }
-
-      const dataRowsIter = (async function* () {
-        for await (const row of allRowsIter) {
-          yield transformStreamRow(row, names, types);
-        }
-      }());
-      const rowStream = Readable.from(dataRowsIter);
+      const { rowStream, names, types } = await ClickHouseRowStream.open(
+        resultSet.stream<Array<unknown>>()[Symbol.asyncIterator](),
+        queryId,
+        highWaterMark || getEnv('dbQueryStreamHighWaterMark'),
+      );
 
       return {
         rowStream,
@@ -470,37 +518,53 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
     };
   }
 
+  /**
+   * Example of types:
+   *
+   * Int64
+   * Nullable(Int64) / Nullable(String)
+   * Nullable(DateTime('UTC'))
+   * LowCardinality(Nullable(String))
+   * Array(DateTime) -> timestamp[]
+   * Map(String, Int32) / Tuple(Int32, String)
+   */
   protected override toGenericType(columnType: string, precision?: number | null, scale?: number | null): GenericDataBaseType {
-    if (columnType.toLowerCase() in ClickhouseTypeToGeneric) {
-      return ClickhouseTypeToGeneric[columnType.toLowerCase()];
+    const type = columnType.trim();
+    const lowerType = type.toLowerCase();
+
+    if (lowerType in ClickhouseTypeToGeneric) {
+      return ClickhouseTypeToGeneric[lowerType];
     }
 
-    const match = columnType.trim().toLowerCase().match(/decimal\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/i);
-
-    if (match) {
-      precision = Number(match[1]);
-      scale = Number(match[2]);
+    const argsStart = type.indexOf('(');
+    if (argsStart === -1) {
+      return super.toGenericType(type, precision, scale);
     }
 
-    /**
-     * Example of types:
-     *
-     * Int64
-     * Nullable(Int64) / Nullable(String)
-     * Nullable(DateTime('UTC'))
-     */
-    if (columnType.includes('(')) {
-      const types = columnType.toLowerCase().match(/([a-z0-9']+)/g);
-      if (types) {
-        for (const type of types) {
-          if (type in ClickhouseTypeToGeneric) {
-            return ClickhouseTypeToGeneric[type];
-          }
-        }
+    const name = lowerType.slice(0, argsStart).trim();
+    const args = type.slice(argsStart + 1, type.lastIndexOf(')'));
+
+    switch (name) {
+      case 'nullable':
+      case 'lowcardinality':
+        return this.toGenericType(args, precision, scale);
+      case 'array':
+        return `${this.toGenericType(args)}[]`;
+      case 'map':
+      case 'tuple':
+      case 'nested':
+        return 'text';
+      case 'decimal': {
+        const [argPrecision, argScale] = args.split(',');
+        return super.toGenericType(name, Number(argPrecision), Number(argScale));
       }
+      default:
+        // Parameterized scalars: DateTime('UTC'), DateTime64(3, 'UTC'), Enum8('Date' = 1),
+        // FixedString(16). Their arguments never carry a type, so only the name is mapped.
+        return name in ClickhouseTypeToGeneric
+          ? ClickhouseTypeToGeneric[name]
+          : super.toGenericType(name, precision, scale);
     }
-
-    return super.toGenericType(columnType, precision, scale);
   }
 
   public async createSchemaIfNotExists(schemaName: string): Promise<void> {
@@ -590,6 +654,7 @@ export class ClickHouseDriver extends BaseDriver implements DriverInterface {
 
   public override async createTable(quotedTableName: string, columns: TableColumn[]) {
     const createTableSql = this.createTableSql(quotedTableName, columns);
+
     try {
       await this.command(createTableSql);
     } catch (e) {
