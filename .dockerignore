@@ -27,5 +27,12 @@ packages/cubejs-backend-native/target
 packages/*/node_modules/
 packages/*/dist/
 packages/*/coverage/
+rust/cube/*/dist/
+rust/cube/*/target/
+rust/cubesql/*/dist/
+rust/cubestore/dist/
+rust/cubestore/*/dist/
+rust/cubestore/*/node_modules/
+**/tsconfig.tsbuildinfo
 # Other
 packages/cubejs-server-core/playground/
