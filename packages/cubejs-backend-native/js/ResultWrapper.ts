@@ -72,6 +72,142 @@ export function rowsToColumnarBuffer(rawData: any): Buffer {
   return Buffer.from(JSON.stringify(rowsToColumnar(rawData)));
 }
 
+type MemberTypeMap = Record<string, string>;
+
+/**
+ * Builds a member -> annotation `type` ("number" | "boolean" | "string" | "time" | ...)
+ * lookup from a single result's `annotation` block.
+ */
+function buildMemberTypeMap(annotation: any): MemberTypeMap {
+  const typeMap: MemberTypeMap = {};
+
+  for (const section of [annotation?.measures, annotation?.dimensions, annotation?.timeDimensions]) {
+    if (section) {
+      for (const member of Object.keys(section)) {
+        const type = section[member]?.type;
+        if (type) {
+          typeMap[member] = type;
+        }
+      }
+    }
+  }
+
+  return typeMap;
+}
+
+/**
+ * The native result transform always stringifies numeric primitives (legacy
+ * CubeStore wire format) and Postgres-style computed booleans can arrive as
+ * 'true'/'false'/'t'/'f' text. Cast them to native JSON types here so the
+ * declared schema type (`number`/`boolean`) is what actually reaches the wire.
+ */
+function castMemberValue(type: string, value: any): any {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (type === 'number') {
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string' && value !== '') {
+      const num = Number(value);
+      return Number.isNaN(num) ? value : num;
+    }
+    return value;
+  }
+
+  if (type === 'boolean') {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      if (value === 'true' || value === 't') {
+        return true;
+      }
+      if (value === 'false' || value === 'f') {
+        return false;
+      }
+    }
+    return value;
+  }
+
+  return value;
+}
+
+function castRowInPlace(row: Record<string, any>, typeMap: MemberTypeMap): void {
+  for (const member of Object.keys(typeMap)) {
+    if (member in row) {
+      row[member] = castMemberValue(typeMap[member], row[member]);
+    }
+  }
+}
+
+/**
+ * Casts a single result's `data` in place, according to its `annotation`.
+ * Handles all three `resType` shapes: vanilla (array of row objects),
+ * compact (`{ members, dataset }` with rows-as-arrays) and columnar
+ * (`{ members, columns }` with per-member arrays).
+ */
+function castResultDataInPlace(result: any): void {
+  const data = result?.data;
+  if (!data) {
+    return;
+  }
+
+  const typeMap = buildMemberTypeMap(result?.annotation);
+  if (Object.keys(typeMap).length === 0) {
+    return;
+  }
+
+  if (Array.isArray(data)) {
+    for (const row of data) {
+      castRowInPlace(row, typeMap);
+    }
+  } else if (Array.isArray(data.dataset) && Array.isArray(data.members)) {
+    const { members, dataset } = data;
+    for (const row of dataset) {
+      for (let i = 0; i < members.length; i++) {
+        const type = typeMap[members[i]];
+        if (type) {
+          row[i] = castMemberValue(type, row[i]);
+        }
+      }
+    }
+  } else if (Array.isArray(data.columns) && Array.isArray(data.members)) {
+    const { members, columns } = data;
+    for (let i = 0; i < members.length; i++) {
+      const type = typeMap[members[i]];
+      const column = columns[i];
+      if (type && Array.isArray(column)) {
+        for (let j = 0; j < column.length; j++) {
+          column[j] = castMemberValue(type, column[j]);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Parses the final serialized query result JSON and casts every measure/
+ * dimension/time-dimension value to its declared annotation type (currently
+ * `number` and `boolean`), so REST/GraphQL consumers receive native JSON
+ * types instead of the legacy all-strings wire format.
+ */
+function castFinalResultBuffer(buffer: ArrayBuffer | Buffer): Buffer {
+  const json = JSON.parse(Buffer.from(buffer).toString('utf8'));
+
+  if (Array.isArray(json?.results)) {
+    for (const result of json.results) {
+      castResultDataInPlace(result);
+    }
+  } else {
+    castResultDataInPlace(json);
+  }
+
+  return Buffer.from(JSON.stringify(json));
+}
+
 class BaseWrapper {
   public readonly isWrapper: boolean = true;
 }
@@ -229,7 +365,8 @@ export class ResultWrapper extends BaseWrapper implements DataResult {
   }
 
   public async getFinalResult(): Promise<any> {
-    return getFinalQueryResult(this.transformData, this.getRawData()[0], this.rootResultObject);
+    const buffer = await getFinalQueryResult(this.transformData, this.getRawData()[0], this.rootResultObject);
+    return castFinalResultBuffer(buffer);
   }
 
   public getResults(): ResultWrapper[] {
@@ -289,7 +426,8 @@ export class ResultMultiWrapper extends BaseWrapperArray implements DataResult {
       slowQuery: this.rootResultObject.slowQuery,
     };
 
-    return getFinalQueryResultMulti(transformDataJson, rawDataRef, responseDataObj);
+    const buffer = await getFinalQueryResultMulti(transformDataJson, rawDataRef, responseDataObj);
+    return castFinalResultBuffer(buffer);
   }
 }
 
