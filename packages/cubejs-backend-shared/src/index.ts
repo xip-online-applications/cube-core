@@ -29,6 +29,8 @@ export * from './decorators';
 export * from './PerfTracker';
 export * from './disposedProxy';
 export * from './logger';
+export * from './log-redaction';
 export * from './pool';
 export * from './sql-escape';
+export * from './object-shape';
 export * from './request-id';

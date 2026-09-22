@@ -59,7 +59,7 @@ type JobedPreAggregation = {
   tableName: string,
   targetTableName: string,
   // eslint-disable-next-line camelcase
-  refreshKeyValues: {refresh_key: string}[][],
+  refreshKeyValues: { refresh_key: string }[][],
   queryKey: any[],
   lastUpdatedAt: string,
   type: string,
@@ -454,6 +454,7 @@ export class RefreshScheduler {
       const partitionsWithDependencies = queriesForPreAggregation
         .map(query => {
           let dependencies: PreAggregationDescription[] = [];
+
           for (let i = 0; i < query.groupedPartitions.length - 1; i++) {
             dependencies = dependencies.concat(query.groupedPartitions[i]);
           }
@@ -529,6 +530,7 @@ export class RefreshScheduler {
         ).then(
           ({ groupedPartitions }) => (groupedPartitions[groupedPartitions.length - 1] || []).map(partition => {
             let cascadedPartitions: PreAggregationDescription[] = [];
+
             for (let j = 0; j < groupedPartitions.length - 1; j++) {
               cascadedPartitions = cascadedPartitions.concat(groupedPartitions[j]);
             }
@@ -548,6 +550,7 @@ export class RefreshScheduler {
       const initialTimezoneCursor = timezoneCursor;
       const initialPartitionCursor = partitionCursor;
       const initialPartitionCounter = partitionCounter;
+
       try {
         preAggregationCursor += 1;
         if (preAggregationCursor >= scheduledPreAggregations.length) {
@@ -635,6 +638,7 @@ export class RefreshScheduler {
         if (queryIteratorState) {
           queryIteratorState[queryIteratorStateKey] = queryIterator;
         }
+
         for (;;) {
           const currentQuery = await queryIterator.current();
           if (currentQuery && queryIterator.partitionCounter() % concurrency === workerIndex) {
