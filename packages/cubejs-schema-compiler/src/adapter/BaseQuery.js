@@ -4172,7 +4172,7 @@ export class BaseQuery {
       return granularityToRollupSeconds();
     }
 
-    console.log(`SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): '${granularity}' = '${granularityToRollupSeconds(granularity)}'`)
+    console.log(`SQL_UTILS.convertToGranularityInSeconds('${memberPath}'): '${granularity}' = '${granularityToRollupSeconds(granularity)}'`);
 
     return granularityToRollupSeconds(granularity);
   }

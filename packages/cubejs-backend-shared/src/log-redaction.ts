@@ -50,6 +50,7 @@ function redactNode(node: unknown, memo: Map<object, unknown>): unknown {
     if (isSqlWithParams(node)) {
       const [sql, params, ...rest] = node;
       out.push(sql, params.map(() => REDACTED));
+
       for (const item of rest) {
         out.push(redactNode(item, memo));
       }

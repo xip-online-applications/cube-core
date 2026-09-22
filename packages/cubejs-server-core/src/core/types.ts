@@ -14,7 +14,7 @@ import { BaseQuery } from '@cubejs-backend/schema-compiler';
 import {
   DefaultEventEmitterOptions,
   RedisEventEmitterOptions
-} from "@cubejs-backend/event-emitter";
+} from '@cubejs-backend/event-emitter';
 
 export interface QueueOptions {
   concurrency?: number;

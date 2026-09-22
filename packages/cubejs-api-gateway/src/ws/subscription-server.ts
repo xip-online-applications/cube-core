@@ -20,6 +20,7 @@ const ensureArray = (value: any) => (Array.isArray(value) ? value : [value]);
 
 const combineByTenant = (values: Array<{ tenantId: string, cube: string }>): Array<{ tenantId: string, cubes: Array<string> }> => {
   const result: Record<string, Set<string>> = {};
+
   for (const { tenantId, cube } of values) {
     if (!result[tenantId]) {
       result[tenantId] = new Set();

@@ -43,6 +43,7 @@ const ordersMembers = `
 
 async function compileError(schema: string): Promise<string> {
   const { compiler } = prepareYamlCompiler(schema);
+
   try {
     await compiler.compile();
   } catch (e: any) {
