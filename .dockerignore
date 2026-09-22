@@ -5,6 +5,7 @@
 !rollup.config.js
 !yarn.lock
 !lerna.json
+!nx.json
 !packages/
 !rust/cube/cubenativeutils/
 !rust/cube/cubeshared/

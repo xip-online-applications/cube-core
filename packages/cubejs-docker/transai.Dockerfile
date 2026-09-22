@@ -27,6 +27,7 @@ WORKDIR /cubejs
 
 COPY package.json .
 COPY lerna.json .
+COPY nx.json .
 COPY yarn.lock .
 COPY tsconfig.base.json .
 COPY rollup.config.js .
