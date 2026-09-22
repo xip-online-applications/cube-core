@@ -32,3 +32,4 @@ rust/cubesql/profile.json
 .vimspector.json
 .claude/settings.local.json
 gen
+.nx/
