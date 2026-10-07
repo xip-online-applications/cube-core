@@ -6,14 +6,14 @@ description: Connect MCP-aware assistants to Cube through a hosted HTTPS endpoin
 Cube MCP (Model Context Protocol) lets MCP-compatible AI clients connect to Cube over HTTPS using OAuth.
 
 This page covers the **Cube connector**, which gives an AI assistant direct access to Cube
-through MCP. It is not [Cube agent skills](/docs/integrations/agent-skills), which run in a
-coding agent and operate Cube through the CLI, or
-[Agent Skills in Cube](/docs/explore-analyze/skills), which are saved workflows your data
-team authors for Analytics Chat.
+through MCP. It is not [Cube agent skills](/docs/integrations/agent-skills) — workflows
+for coding agents, which the Cube plugin for Claude Code bundles together with this
+server — or [Agent Skills in Cube](/docs/explore-analyze/skills), which are saved
+workflows your data team authors for Analytics Chat.
 
 <Note>
 
-The MCP server is available on [Premium and Enterprise plans](https://cube.dev/pricing). <br />Users need the [Viewer][ref-roles] role or higher to interact with the MCP server. Which tools a
+The MCP server is available on [all plans](https://cube.dev/pricing). <br />Users need the [Viewer][ref-roles] role or higher to interact with the MCP server. Which tools a
 user sees depends on their role — see [Available actions](#available-actions).
 
 </Note>
@@ -28,7 +28,7 @@ Model Context Protocol (MCP) is an open standard that enables AI assistants to s
 Cube hosts an MCP server endpoint. MCP clients connect over HTTPS and authenticate via OAuth.
 
 - **Endpoint:** `https://cubecloud.dev/mcp`
-- **OAuth flow:** Authorization Code + PKCE, `client_id` = `cube-mcp-client`, scope = `mcp-agent-access`. Clients discover it automatically from the endpoint — there is nothing to configure by hand.
+- **OAuth flow:** Authorization Code + PKCE, scope = `mcp-agent-access`. Most clients discover OAuth automatically and use the public client ID `cube-mcp-client`. Microsoft 365 Copilot requires a separate [OAuth setup](#connect-to-microsoft-365-copilot).
 - **Account selection:** You sign in to Cube as part of the OAuth flow and, if you belong to more than one account, choose which one to connect.
 - **Deployment selection:** On connect, the client lands on the tenant **default deployment** set by your admin (or the first deployment you can access). Clients can also target a specific deployment and agent per request — see [Select a deployment and agent](#select-a-deployment-and-agent).
 
@@ -106,11 +106,57 @@ On a Team or Enterprise plan, an owner may need to enable Cube first under
 
 To use Cube in a chat, open the tools menu and enable the Cube connector, then ask a data
 question. In Claude Code, run `/mcp` to confirm the connector is available and authenticate
-if prompted.
+if prompted. Alternatively, install the [Cube plugin](/docs/integrations/agent-skills#claude-code),
+which bundles this server with Cube agent skills.
 
 <Frame>
   <img src="https://lgo0ecceic.ucarecd.net/68c3e7e2-def2-4aec-84a5-8cded3473def/" />
 </Frame>
+
+## Connect to Microsoft 365 Copilot
+
+<Warning>
+
+Microsoft 365 Copilot setup is currently in preview. Reach out to the
+[Cube support team](/admin/account-billing/support) to activate it for your account.
+
+</Warning>
+
+An admin can get the OAuth client details for the selected MCP endpoint from
+**Admin → MCP Server → Microsoft 365 Copilot setup**.
+
+1. On the MCP Server page, select the [single endpoint or a region-specific
+   endpoint](#one-endpoint-for-everyone), then click **Get OAuth client details**.
+   The credentials and OAuth URLs correspond to the displayed **MCP Endpoint**.
+2. In the [Teams developer portal](https://dev.teams.microsoft.com/), open
+   **Tools → OAuth client registration** and create a registration with these values:
+
+   | Cube Admin | Teams OAuth client registration |
+   | --- | --- |
+   | Client ID, Client secret, Scope | Same-named fields |
+   | Authorization URL | Authorization endpoint |
+   | Token URL | Token endpoint and Refresh endpoint |
+   | MCP Endpoint | Base URL |
+
+   Set **Restrict usage by app** to **Any Teams app** and leave PKCE enabled.
+   [Microsoft warns](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-authentication-oauth#use-the-teams-developer-portal)
+   that binding an MCP registration to an existing Teams app ID causes Copilot tool calls
+   to return `404`.
+
+   For **Restrict usage by org**, choose **My organization only** for one Microsoft 365
+   organization or **Any Microsoft 365 organization** for cross-organization use.
+3. Save the registration. In your Microsoft 365 Copilot plugin manifest, set the MCP
+   server `url` to the **MCP Endpoint** you entered as **Base URL**, use `OAuthPluginVault`
+   as the runtime authentication type, and set `reference_id` to the OAuth client
+   registration ID from the portal.
+   Follow [Microsoft's OAuth setup
+   guide](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-authentication-oauth)
+   for the remaining plugin configuration.
+
+Cube registers the Teams redirect URI
+`https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect` for this client. The client
+secret is shared by every Cube account and cannot be rotated per account. Access is still
+granted per user: each user signs in to Cube to authorize Copilot.
 
 ## Connect to Cursor
 

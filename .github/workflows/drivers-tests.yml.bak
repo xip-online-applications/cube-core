@@ -5,6 +5,7 @@ on:
     branches:
       - 'master'
     paths:
+      - '.github/actions/setup-yarn-1/**'
       - '.github/workflows/drivers-tests.yml'
 
       - 'packages/cubejs-testing-drivers/**'
@@ -37,6 +38,7 @@ on:
       - 'rust/cube/**'
   pull_request:
     paths:
+      - '.github/actions/setup-yarn-1/**'
       - '.github/workflows/drivers-tests.yml'
 
       - 'packages/cubejs-testing-drivers/**'
@@ -77,6 +79,9 @@ on:
         options:
           - 'true'
           - 'false'
+
+permissions:
+  contents: read
 
 jobs:
   latest-tag-sha:
@@ -133,7 +138,7 @@ jobs:
       - name: Install Yarn
         run: npm install -g yarn
       - name: Set Yarn version
-        run: yarn policies set-version v1.22.22
+        uses: ./.github/actions/setup-yarn-1
       - name: Install cargo-cp-artifact
         run: npm install -g cargo-cp-artifact@0.1
       - uses: Swatinem/rust-cache@v2
@@ -198,6 +203,15 @@ jobs:
           file: ./packages/cubejs-docker/testing-drivers.Dockerfile
           tags: cubejs/cube:testing-drivers
           push: ${{ (env.DOCKERHUB_USERNAME != '') }}
+      - name: Verify JDBC runtime
+        timeout-minutes: 1
+        run: |
+          docker run --rm --network none --workdir /cubejs --entrypoint node cubejs/cube:testing-drivers -e '
+            const java = require("java");
+            console.log("Java version:", java.callStaticMethodSync("java.lang.System", "getProperty", "java.version"));
+            // JVM threads keep Node alive after the check.
+            process.exit(0);
+          '
       - name: Save Docker image as artifact
         run: |
           IMAGE_TAG=cubejs/cube:testing-drivers
@@ -216,7 +230,7 @@ jobs:
       id-token: write   # Needed for OIDC+AWS
       contents: read
 
-    timeout-minutes: 30
+    timeout-minutes: 40
     needs: [latest-tag-sha, build]
     if: (needs['latest-tag-sha'].outputs.sha != github.sha)
     env:
@@ -235,7 +249,6 @@ jobs:
         redshift
         redshift-export-bucket-s3
         snowflake
-        snowflake-encrypted-pk
         snowflake-export-bucket-s3
         snowflake-export-bucket-s3-via-storage-integration-iam-roles
         snowflake-export-bucket-s3-prefix
@@ -282,7 +295,6 @@ jobs:
           - redshift
           - redshift-export-bucket-s3
           - snowflake
-          - snowflake-encrypted-pk
           - snowflake-export-bucket-s3
           - snowflake-export-bucket-s3-via-storage-integration-iam-roles
           - snowflake-export-bucket-s3-prefix
@@ -332,7 +344,7 @@ jobs:
           node-version-file: '.nvmrc'
 
       - name: Configure `yarn`
-        run: yarn policies set-version v1.22.22
+        uses: ./.github/actions/setup-yarn-1
 
       - name: Get yarn cache directory path
         id: yarn-cache-dir-path
@@ -353,9 +365,9 @@ jobs:
           CUBESTORE_SKIP_POST_INSTALL: true
         with:
           max_attempts: 3
-          retry_on: error
+          retry_on: any
           retry_wait_seconds: 15
-          timeout_minutes: 20
+          timeout_minutes: 10
           command: yarn install --frozen-lockfile
 
       - name: Build client
@@ -427,7 +439,6 @@ jobs:
 
           # Snowflake
           DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_USER: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_USER }}
-          DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PASS: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PASS }}
           DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PRIVATE_KEY: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PRIVATE_KEY }}
           DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PRIVATE_KEY_PASS: ${{ secrets.DRIVERS_TESTS_CUBEJS_DB_SNOWFLAKE_PRIVATE_KEY_PASS }}
         with:
