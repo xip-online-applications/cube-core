@@ -3,6 +3,8 @@ import type { ZodError } from 'zod';
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
 import { Subject } from 'rxjs';
 import { map, bufferTime } from 'rxjs/operators';
+import { isValidRequestId } from '@cubejs-backend/shared';
+
 import { UserError } from '../user-error';
 import { ExtendedRequestContext, ContextAcceptorFn } from '../interfaces';
 import { CubejsHandlerError } from '../cubejs-handler-error';
@@ -193,6 +195,11 @@ export class SubscriptionServer {
 
       const subscriptionId = message.messageId;
       const baseRequestId = message.requestId || `${connectionId}-${subscriptionId}`;
+      // Without a requestId the id is built from the raw messageId, which the schema doesn't restrict
+      if (!isValidRequestId(baseRequestId)) {
+        throw new UserError(`Invalid request id: ${JSON.stringify(baseRequestId)}`);
+      }
+
       const requestId = `${baseRequestId}-span-${uuidv4()}`;
 
       context = await this.apiGateway.contextByReq(

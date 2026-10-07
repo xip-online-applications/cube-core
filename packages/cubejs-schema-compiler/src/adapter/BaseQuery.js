@@ -28,7 +28,7 @@ import {
 } from '@cubejs-backend/shared';
 
 import { CubeSymbols } from '../compiler/CubeSymbols';
-import { UserError } from '../compiler/UserError';
+import { JoinPathNotFoundError, UserError } from '../compiler/UserError';
 import { SqlParser } from '../parser/SqlParser';
 import { BaseDimension } from './BaseDimension';
 import { BaseFilter } from './BaseFilter';
@@ -413,6 +413,25 @@ export class BaseQuery {
       } else {
         throw e;
       }
+    }
+  }
+
+  /**
+   * Same as joinTreeForHints(), but returns an empty list instead of throwing when the join graph
+   * has no path covering the hints, and a single-element list otherwise. An exception thrown into
+   * the native planner stays pending there, so it can't probe hint sets by catching.
+   * @public
+   * @param {Array<(Array<string> | string)>} hints
+   * @return {Array<import('../compiler/JoinGraph').FinishedJoinTree>}
+   */
+  tryJoinTreeForHints(hints) {
+    try {
+      return [this.joinTreeForHints(hints)];
+    } catch (e) {
+      if (e instanceof JoinPathNotFoundError) {
+        return [];
+      }
+      throw e;
     }
   }
 
@@ -983,6 +1002,9 @@ export class BaseQuery {
       totalQuery: this.options.totalQuery,
       joinHints: this.options.joinHints,
       cubestoreSupportMultistage: this.options.cubestoreSupportMultistage ?? getEnv('cubeStoreRollingWindowJoin'),
+      maxMultiStageDepth: this.options.maxMultiStageDepth ?? getEnv('maxMultiStageDepth'),
+      maxMultiStageStages: this.options.maxMultiStageStages ?? getEnv('maxMultiStageStages'),
+      maxMemberResolutionDepth: this.options.maxMemberResolutionDepth ?? getEnv('maxMemberResolutionDepth'),
       disableExternalPreAggregations: !!this.options.disableExternalPreAggregations,
       convertTzForRawTimeDimension: !!this.options.convertTzForRawTimeDimension,
       maskedMembers: this.options.maskedMembers,
@@ -1046,6 +1068,9 @@ export class BaseQuery {
       securityContext: this.contextSymbols.securityContext,
       joinHints: this.options.joinHints,
       cubestoreSupportMultistage: this.options.cubestoreSupportMultistage ?? getEnv('cubeStoreRollingWindowJoin'),
+      maxMultiStageDepth: this.options.maxMultiStageDepth ?? getEnv('maxMultiStageDepth'),
+      maxMultiStageStages: this.options.maxMultiStageStages ?? getEnv('maxMultiStageStages'),
+      maxMemberResolutionDepth: this.options.maxMemberResolutionDepth ?? getEnv('maxMemberResolutionDepth'),
       disableExternalPreAggregations: !!this.options.disableExternalPreAggregations,
       subqueryJoins: this.options.subqueryJoins,
     };
@@ -1059,14 +1084,10 @@ export class BaseQuery {
 
   applyNativePreAggResult(preAggResult) {
     if (!preAggResult) return;
-    if (Array.isArray(preAggResult)) {
-      this.preAggregations.preAggregationUsageInfos = preAggResult;
-      const first = preAggResult[0];
-      this.preAggregations.preAggregationForQuery =
-        this.getPreAggregationByName(first.cubeName, first.preAggregationName);
-    } else {
-      this.preAggregations.preAggregationForQuery = preAggResult;
-    }
+    this.preAggregations.preAggregationUsageInfos = preAggResult;
+    const first = preAggResult[0];
+    this.preAggregations.preAggregationForQuery =
+      this.getPreAggregationByName(first.cubeName, first.preAggregationName);
   }
 
   allCubeMembers(path) {
@@ -1108,6 +1129,10 @@ export class BaseQuery {
       const lambdaPreAgg = preAggForQuery.referencedPreAggregations[preAggForQuery.referencedPreAggregations.length - 1];
       // TODO(cristipp) Use source query instead of preaggregation references.
       const references = this.cubeEvaluator.evaluatePreAggregationReferences(lambdaPreAgg.cube, lambdaPreAgg.preAggregation);
+      const [timeDimension] = references.timeDimensions;
+      // @see https://github.com/cube-js/cube/issues/11682
+      const sourceDateRange = timeDimension &&
+        this.preAggregations.lambdaSourceDateRange(lambdaPreAgg, preAggForQuery);
       const lambdaQuery = this.newSubQuery(
         {
           measures: references.measures,
@@ -1115,13 +1140,18 @@ export class BaseQuery {
           timeDimensions: references.timeDimensions,
           filters: [
             ...this.options.filters ?? [],
-            references.timeDimensions.length > 0
-              ? {
-                member: references.timeDimensions[0].dimension,
-                operator: 'afterDate',
-                values: [FROM_PARTITION_RANGE]
-              }
-              : [],
+            ...(timeDimension ? [{
+              member: timeDimension.dimension,
+              operator: 'afterDate',
+              values: [FROM_PARTITION_RANGE]
+            }] : []),
+            // Kept separate from the afterDate filter on purpose: inDateRange's lower bound is
+            // inclusive and would double count rows sitting exactly at the partition end.
+            ...(sourceDateRange ? [{
+              member: timeDimension.dimension,
+              operator: 'inDateRange',
+              values: sourceDateRange
+            }] : []),
           ],
           segments: this.options.segments,
           order: [],
@@ -1136,7 +1166,11 @@ export class BaseQuery {
         () => this.cacheKeyQueries(),
         { preAggregationQuery: true }
       );
-      result[this.preAggregations.preAggregationId(lambdaPreAgg)] = { sqlAndParams, cacheKeyQueries };
+      result[this.preAggregations.preAggregationId(lambdaPreAgg)] = {
+        sqlAndParams,
+        cacheKeyQueries,
+        sourceDateRange,
+      };
     }
     return result;
   }
@@ -1516,11 +1550,15 @@ export class BaseQuery {
     const allMemberChildren = this.collectAllMemberChildren(context);
     const memberToIsMultiStage = this.collectAllMultiStageMembers(allMemberChildren);
 
+    const hasMultiStageMembersCache = {};
     const hasMultiStageMembers = (m) => {
       if (memberToIsMultiStage[m]) {
         return true;
       }
-      return allMemberChildren[m]?.some(c => hasMultiStageMembers(c)) || false;
+      if (!(m in hasMultiStageMembersCache)) {
+        hasMultiStageMembersCache[m] = allMemberChildren[m]?.some(c => hasMultiStageMembers(c)) || false;
+      }
+      return hasMultiStageMembersCache[m];
     };
 
     const measuresToRender = (multiplied, cumulative) => R.pipe(
@@ -1542,6 +1580,7 @@ export class BaseQuery {
         R.unnest
       )([false, true]);
     const withQueries = [];
+    const withQueriesMemo = new Map();
     const multiStageMembers = R.uniq(
       this.allMembersConcat(false)
         // TODO boolean logic filter support
@@ -1579,7 +1618,8 @@ export class BaseQuery {
         segments: this.options.segments || [],
       },
       allMemberChildren,
-      withQueries
+      withQueries,
+      withQueriesMemo
     ));
     const usedWithQueries = {};
     multiStageMembers.forEach(m => this.collectUsedWithQueries(usedWithQueries, m));
@@ -1639,18 +1679,34 @@ export class BaseQuery {
     return member;
   }
 
-  multiStageWithQueries(member, queryContext, memberChildren, withQueries) {
+  /**
+   * `memo` maps a member to the `[queryContext, subQuery]` pairs already walked
+   * for it. Each level visits its children twice, so without it a chain of N
+   * multi-stage members costs 2^N calls.
+   */
+  multiStageWithQueries(member, queryContext, memberChildren, withQueries, memo = new Map()) {
+    const memberMemo = memo.get(member) || [];
+    memo.set(member, memberMemo);
+    const memoized = memberMemo.find(([context]) => R.equals(context, queryContext));
+    if (memoized) {
+      return memoized[1];
+    }
+    const subQuery = this.multiStageWithQueriesUncached(member, queryContext, memberChildren, withQueries, memo);
+    memberMemo.push([queryContext, subQuery]);
+    return subQuery;
+  }
+
+  multiStageWithQueriesUncached(member, queryContext, memberChildren, withQueries, memo) {
     // TODO calculate based on remove_filter in future
     const wouldNodeApplyFilters = !memberChildren[member];
     let memberFrom = memberChildren[member]
-      ?.map(child => this.multiStageWithQueries(child, this.childrenMultiStageContext(member, queryContext), memberChildren, withQueries));
+      ?.map(child => this.multiStageWithQueries(child, this.childrenMultiStageContext(member, queryContext), memberChildren, withQueries, memo));
     const unionFromDimensions = memberFrom ? R.uniq(R.flatten(memberFrom.map(f => f.dimensions))) : queryContext.dimensions;
     const unionDimensionsContext = { ...queryContext, dimensions: unionFromDimensions.filter(d => !this.newDimension(d).isMultiStage()) };
-    // TODO is calling multiStageWithQueries twice optimal?
     memberFrom = memberChildren[member] &&
       R.uniqBy(
         f => f.alias,
-        memberChildren[member].map(child => this.multiStageWithQueries(child, this.childrenMultiStageContext(member, unionDimensionsContext), memberChildren, withQueries))
+        memberChildren[member].map(child => this.multiStageWithQueries(child, this.childrenMultiStageContext(member, unionDimensionsContext), memberChildren, withQueries, memo))
       );
     const selfContext = this.selfMultiStageContext(member, queryContext, wouldNodeApplyFilters);
     const subQuery = {
@@ -4819,20 +4875,9 @@ export class BaseQuery {
         lt: '{{ column }} < {{ param }}',
         lte: '{{ column }} <= {{ param }}',
         like_pattern: '{% if start_wild %}\'%\' || {% endif %}{{ value }}{% if end_wild %}|| \'%\'{% endif %}',
-        // Character the native planner uses to escape `%`, `_` and itself inside
-        // a user-supplied LIKE value, mirroring what BaseFilter.escapeWildcardChars
-        // does on the legacy path. Without it the planner skips escaping entirely
-        // and a user searching for a literal `%` gets a wildcard instead, matching
-        // every row. Backslash is the default LIKE escape character in Postgres,
-        // MySQL, BigQuery, ClickHouse and Cube Store, so no ESCAPE clause is
-        // needed here - and Cube Store's parser rejects one outright, which is
-        // why this must stay a bare escape character. Dialects whose LIKE has no
-        // default escape character add the explicit clause themselves: Presto and
-        // Trino in `like_pattern`, MSSQL, Oracle and Snowflake in
-        // `tesseract.ilike` (their pattern is wrapped, so the clause cannot go
-        // inside it), and DuckDB and Pinot likewise in `tesseract.ilike` - those
-        // two live in their driver packages rather than in this directory, so a
-        // sweep of only this directory will miss them.
+        // Stays bare - Cube Store rejects ESCAPE. Dialects with no default escape char add the
+        // clause in `like_pattern`/`tesseract.ilike`, some in driver packages (Pinot, Dremio,
+        // Druid, DuckDB) - a sweep of this directory misses them. Wrong for ksqlDB (no ESCAPE).
         like_escape_char: '\\',
         always_true: '1 = 1'
 

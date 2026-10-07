@@ -39,7 +39,7 @@ import {
   ApiScopes,
 } from './types/strings';
 import {
-  QueryType as QueryTypeEnum, ResultType
+  QueryTypeEnum, ResultType
 } from './types/enums';
 import {
   BaseRequest,
@@ -224,6 +224,8 @@ class ApiGateway {
 
   protected readonly subscriptionStore: any;
 
+  protected readonly devServer: boolean;
+
   protected readonly enforceSecurityChecks: boolean;
 
   protected readonly standalone: boolean;
@@ -287,7 +289,13 @@ class ApiGateway {
 
     this.queryRewrite = options.queryRewrite || (async (query) => query);
     this.subscriptionStore = options.subscriptionStore || new LocalSubscriptionStore();
-    this.enforceSecurityChecks = options.enforceSecurityChecks || (process.env.NODE_ENV === 'production');
+    // server-core resolves dev mode and passes it down; CUBEJS_DEV_MODE is the fallback
+    // for anyone constructing the gateway directly
+    this.devServer = options.devServer ?? getEnv('devMode');
+    // `||`, not `??`: master's semantics, where an explicit `false` cannot disable auth
+    // outside dev mode. server-core never passes this key, so the `!devServer` default
+    // is reached either way - `??` would only loosen it for direct gateway embedders
+    this.enforceSecurityChecks = options.enforceSecurityChecks || !this.devServer;
     this.extendContext = options.extendContext;
 
     this.checkAuthFn = this.createCheckAuthFn(options);
@@ -301,6 +309,7 @@ class ApiGateway {
     this.event = options.event || function dummyEvent() {};
     this.sqlServer = this.createSQLServerInstance({
       gatewayPort: options.gatewayPort,
+      devServer: this.devServer,
     });
   }
 
@@ -311,6 +320,7 @@ class ApiGateway {
   protected createSQLServerInstance(options: SQLServerConstructorOptions): SQLServer {
     return new SQLServer(this, {
       gatewayPort: options.gatewayPort,
+      devServer: options.devServer,
     });
   }
 
@@ -337,32 +347,6 @@ class ApiGateway {
     /** **************************************************************
      * graphql scope                                                 *
      *************************************************************** */
-
-    app.post(`${this.basePath}/v1/graphql-to-json`, userMiddlewares, async (req: any, res) => {
-      const { query, variables } = req.body;
-      const compilerApi = await this.getCompilerApi(req.context);
-
-      const metaConfig = await compilerApi.metaConfig(req.context, {
-        requestId: req.context.requestId,
-      });
-
-      let schema = compilerApi.getGraphQLSchema();
-      if (!schema) {
-        schema = makeSchema(metaConfig);
-        compilerApi.setGraphQLSchema(schema);
-      }
-
-      try {
-        const jsonQuery = getJsonQueryFromGraphQLQuery(query, metaConfig, variables);
-        res.json({ jsonQuery });
-      } catch (e: any) {
-        const stack = getEnv('devMode') ? e.stack : undefined;
-        this.logger('GraphQL to JSON error', {
-          error: (stack || e).toString(),
-        });
-        res.json({ jsonQuery: null });
-      }
-    });
 
     app.use(
       `${this.basePath}/graphql`,
@@ -393,7 +377,7 @@ class ApiGateway {
             res,
             apiGateway: this
           },
-          graphiql: getEnv('nodeEnv') !== 'production'
+          graphiql: this.devServer
             ? { headerEditorEnabled: true }
             : false,
           extensions: () => (res as any).extensions || {},
@@ -542,6 +526,33 @@ class ApiGateway {
         }
       })
     );
+
+    // Named for GraphQL but guarded by `meta`: it only reads the data model
+    // metadata to translate a query string, and executes nothing.
+    app.post(`${this.basePath}/v1/graphql-to-json`, jsonParser, userMiddlewares, userAsyncHandler(async (req: any, res) => {
+      await this.assertApiScope(
+        'meta',
+        req?.context?.securityContext
+      );
+
+      const { query, variables } = req.body;
+      const compilerApi = await this.getCompilerApi(req.context);
+
+      const metaConfig = await compilerApi.metaConfig(req.context, {
+        requestId: req.context.requestId,
+      });
+
+      try {
+        const jsonQuery = getJsonQueryFromGraphQLQuery(query, metaConfig, variables);
+        res.json({ jsonQuery });
+      } catch (e: any) {
+        const stack = this.devServer ? e.stack : undefined;
+        this.logger('GraphQL to JSON error', {
+          error: (stack || e).toString(),
+        });
+        res.json({ jsonQuery: null });
+      }
+    }));
 
     app.post(
       `${this.basePath}/v1/cubesql`,
@@ -767,7 +778,7 @@ class ApiGateway {
   }
 
   private filterVisibleItemsInMeta(context: RequestContext, cubes: any[]) {
-    const isDevMode = getEnv('devMode');
+    const isDevMode = this.devServer;
     function visibilityFilter(item) {
       return isDevMode || context.signedWithPlaygroundAuthSecret || item.isVisible;
     }
@@ -1672,8 +1683,9 @@ class ApiGateway {
         normalizedQueries.map(async (normalizedQuery) => (await this.getCompilerApi(context)).getSql(
           this.coerceForSqlQuery({ ...normalizedQuery, memberToAlias, expressionParams, disableExternalPreAggregations }, context),
           {
-            includeDebugInfo: getEnv('devMode') || context.signedWithPlaygroundAuthSecret,
+            includeDebugInfo: this.devServer || context.signedWithPlaygroundAuthSecret,
             exportAnnotatedSql,
+            includeTransformedQuery: true,
           }
         ))
       );
@@ -1923,7 +1935,8 @@ class ApiGateway {
         normalizedQueries.map(async (normalizedQuery) => (await this.getCompilerApi(context)).getSql(
           this.coerceForSqlQuery(normalizedQuery, context),
           {
-            includeDebugInfo: getEnv('devMode') || context.signedWithPlaygroundAuthSecret
+            includeDebugInfo: this.devServer || context.signedWithPlaygroundAuthSecret,
+            includeTransformedQuery: true,
           }
         ))
       );
@@ -1959,7 +1972,9 @@ class ApiGateway {
           const loadRequestSQLStarted = new Date();
           const sqlQueryRaw = await (await this.getCompilerApi(context))
             .getSql(
-              this.coerceForSqlQuery(normalizedQuery, context)
+              this.coerceForSqlQuery(normalizedQuery, context),
+              // Only the dev/Playground load response returns the transformed query.
+              { includeTransformedQuery: this.devServer || !!context.signedWithPlaygroundAuthSecret }
             );
           const sqlQuery = this.sanitizeSqlQuery(sqlQueryRaw);
 
@@ -2119,7 +2134,7 @@ class ApiGateway {
       // replaces it with the unredacted object.
       usedPreAggregations: publicUsedPreAggregations(response.usedPreAggregations),
       ...(
-        getEnv('devMode') ||
+        this.devServer ||
           context.signedWithPlaygroundAuthSecret
           ? {
             refreshKeyValues: response.refreshKeyValues,
@@ -2606,7 +2621,7 @@ class ApiGateway {
    * the body carried no statement (validation failed on it).
    */
   private redactedSqlForLog(query: unknown): { sql: string } | undefined {
-    if (!getEnv('logRedaction') || typeof query !== 'string') {
+    if (!getEnv('logRedaction', this.devServer) || typeof query !== 'string') {
       return undefined;
     }
 
@@ -2621,8 +2636,8 @@ class ApiGateway {
   public handleError({
     e, context, query, redactedQuery, res, requestStarted
   }: HandleErrorOptions) {
-    const requestId = getEnv('devMode') || context?.signedWithPlaygroundAuthSecret ? context?.requestId : undefined;
-    const stack = getEnv('devMode') ? e.stack : undefined;
+    const requestId = this.devServer || context?.signedWithPlaygroundAuthSecret ? context?.requestId : undefined;
+    const stack = this.devServer ? e.stack : undefined;
 
     const plainError = e.plainMessages;
     const loggedQuery = {
@@ -2981,7 +2996,7 @@ class ApiGateway {
     } catch (e: unknown) {
       if (e instanceof CubejsHandlerError) {
         const error = e.originalError || e;
-        const stack = getEnv('devMode') ? error.stack : undefined;
+        const stack = this.devServer ? error.stack : undefined;
         this.log({
           type: error.message,
           url: req.url,
@@ -2991,7 +3006,7 @@ class ApiGateway {
 
         res.status(e.status).json({ error: e.message });
       } else if (e instanceof Error) {
-        const stack = getEnv('devMode') ? e.stack : undefined;
+        const stack = this.devServer ? e.stack : undefined;
         this.log({
           type: 'Auth Error',
           token,
@@ -3130,7 +3145,7 @@ class ApiGateway {
   };
 
   private logProbeError(e: any, type: string): void {
-    const stack = getEnv('devMode') ? (e as Error).stack : undefined;
+    const stack = this.devServer ? (e as Error).stack : undefined;
     this.log({
       type,
       driverType: e.driverType,

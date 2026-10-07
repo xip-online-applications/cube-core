@@ -3,6 +3,44 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.1](https://github.com/cube-js/cube/compare/v1.8.0...v1.8.1) (2026-10-07)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
+# [1.8.0](https://github.com/cube-js/cube/compare/v1.7.50...v1.8.0) (2026-10-07)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
+## [1.7.50](https://github.com/cube-js/cube/compare/v1.7.49...v1.7.50) (2026-10-02)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
+## [1.7.49](https://github.com/cube-js/cube/compare/v1.7.48...v1.7.49) (2026-10-02)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
+## [1.7.48](https://github.com/cube-js/cube/compare/v1.7.47...v1.7.48) (2026-10-01)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
+## [1.7.47](https://github.com/cube-js/cube/compare/v1.7.46...v1.7.47) (2026-09-29)
+
+### Features
+
+- **server-core:** make dev mode opt-in and stop respecting NODE_ENV ([#11959](https://github.com/cube-js/cube/issues/11959)) ([4034a90](https://github.com/cube-js/cube/commit/4034a90bb1c59a815e0558daffa1d0625c40b7aa))
+
+## [1.7.46](https://github.com/cube-js/cube/compare/v1.7.45...v1.7.46) (2026-09-26)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
+## [1.7.45](https://github.com/cube-js/cube/compare/v1.7.44...v1.7.45) (2026-09-25)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
+## [1.7.44](https://github.com/cube-js/cube/compare/v1.7.43...v1.7.44) (2026-09-24)
+
+**Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver
+
 ## [1.7.43](https://github.com/cube-js/cube/compare/v1.7.42...v1.7.43) (2026-09-21)
 
 **Note:** Version bump only for package @cubejs-backend/databricks-jdbc-driver

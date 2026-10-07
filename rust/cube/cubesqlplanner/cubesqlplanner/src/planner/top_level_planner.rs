@@ -1,4 +1,4 @@
-use super::planners::multi_stage::PlanningScope;
+use super::planners::multi_stage::{check_multi_stage_depth, PlanningScope};
 use super::planners::QueryPlanner;
 use super::state::State;
 use super::QueryProperties;
@@ -32,6 +32,11 @@ impl TopLevelPlanner {
     }
 
     pub fn plan(&self) -> Result<(String, Vec<PreAggregationUsage>), CubeError> {
+        check_multi_stage_depth(
+            &self.request.all_used_symbols()?,
+            self.request.max_multi_stage_depth(),
+        )?;
+
         let query_planner = QueryPlanner::new(self.request.clone(), self.query_tools.clone());
         let mut scope = PlanningScope::new();
         let query = query_planner.plan(&mut scope)?;
@@ -102,6 +107,7 @@ impl TopLevelPlanner {
         let result = if !self.request.is_pre_aggregation_query() {
             let mut pre_aggregation_optimizer = PreAggregationOptimizer::new(
                 self.query_tools.clone(),
+                self.request.query_join_hints().clone(),
                 self.cubestore_support_multistage,
             );
             let disable_external_pre_aggregations =

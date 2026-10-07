@@ -120,6 +120,9 @@ export type SQLInterfaceOptions = {
   canSwitchUserForSession: (payload: CanSwitchUserPayload) => unknown | Promise<unknown>,
   // gateway options
   gatewayPort?: number,
+  /** Development mode as server-core resolved it; the native side can only read
+   * CUBEJS_DEV_MODE, which CreateOptions.devServer overrides */
+  devServer?: boolean,
 };
 
 export interface TransformConfig {
@@ -477,7 +480,8 @@ export const buildSqlAndParams = (cubeEvaluator: any): any[] => {
 
 export type ResultRow = Record<string, string>;
 
-export const parseCubestoreResultMessage = async (message: Buffer): Promise<ResultWrapper> => {
+/** Read without copying: don't mutate, detach or transfer `message` until the promise settles. */
+export const parseCubestoreResultMessage = async (message: Readonly<Buffer>): Promise<ResultWrapper> => {
   const native = loadNative();
 
   const msg = await native.parseCubestoreResultMessage(message) as NativeQueryResultRef;

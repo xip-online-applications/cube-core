@@ -112,7 +112,7 @@ checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
 [[package]]
 name = "arrow"
 version = "13.0.0"
-source = "git+https://github.com/cube-js/arrow-rs.git?rev=837ddde06037034056b9faced3d8ea7073529cfc#837ddde06037034056b9faced3d8ea7073529cfc"
+source = "git+https://github.com/cube-js/arrow-rs.git?rev=d484adc1a79495624d659959f22fa4cd55ae2d3c#d484adc1a79495624d659959f22fa4cd55ae2d3c"
 dependencies = [
  "bitflags 1.3.2",
  "chrono",
@@ -127,7 +127,7 @@ dependencies = [
  "lexical-core",
  "multiversion",
  "num",
- "rand 0.8.5",
+ "rand 0.8.6",
  "regex",
  "regex-syntax",
  "serde",
@@ -757,7 +757,7 @@ dependencies = [
 [[package]]
 name = "cube-ext"
 version = "1.0.0"
-source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=2ba1ea01df982a7d5334e146d70c6a39bb657f5e#2ba1ea01df982a7d5334e146d70c6a39bb657f5e"
+source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03#0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03"
 dependencies = [
  "arrow",
  "chrono",
@@ -817,7 +817,7 @@ dependencies = [
  "portpicker",
  "postgres-types",
  "pretty_assertions",
- "rand 0.8.5",
+ "rand 0.8.6",
  "regex",
  "rust_decimal",
  "serde",
@@ -881,7 +881,7 @@ dependencies = [
 [[package]]
 name = "datafusion"
 version = "7.0.0"
-source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=2ba1ea01df982a7d5334e146d70c6a39bb657f5e#2ba1ea01df982a7d5334e146d70c6a39bb657f5e"
+source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03#0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03"
 dependencies = [
  "ahash 0.7.8",
  "arrow",
@@ -902,7 +902,7 @@ dependencies = [
  "parquet",
  "paste",
  "pin-project-lite",
- "rand 0.8.5",
+ "rand 0.8.6",
  "smallvec",
  "sqlparser",
  "tempfile",
@@ -914,7 +914,7 @@ dependencies = [
 [[package]]
 name = "datafusion-common"
 version = "7.0.0"
-source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=2ba1ea01df982a7d5334e146d70c6a39bb657f5e#2ba1ea01df982a7d5334e146d70c6a39bb657f5e"
+source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03#0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03"
 dependencies = [
  "arrow",
  "ordered-float 2.10.0",
@@ -925,7 +925,7 @@ dependencies = [
 [[package]]
 name = "datafusion-data-access"
 version = "1.0.0"
-source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=2ba1ea01df982a7d5334e146d70c6a39bb657f5e#2ba1ea01df982a7d5334e146d70c6a39bb657f5e"
+source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03#0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03"
 dependencies = [
  "async-trait",
  "chrono",
@@ -938,7 +938,7 @@ dependencies = [
 [[package]]
 name = "datafusion-expr"
 version = "7.0.0"
-source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=2ba1ea01df982a7d5334e146d70c6a39bb657f5e#2ba1ea01df982a7d5334e146d70c6a39bb657f5e"
+source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03#0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03"
 dependencies = [
  "ahash 0.7.8",
  "arrow",
@@ -949,7 +949,7 @@ dependencies = [
 [[package]]
 name = "datafusion-physical-expr"
 version = "7.0.0"
-source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=2ba1ea01df982a7d5334e146d70c6a39bb657f5e#2ba1ea01df982a7d5334e146d70c6a39bb657f5e"
+source = "git+https://github.com/cube-js/arrow-datafusion.git?rev=0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03#0ee9a9f4a4583b10a14de85d9c4b31b2a4148d03"
 dependencies = [
  "ahash 0.7.8",
  "arrow",
@@ -964,7 +964,7 @@ dependencies = [
  "md-5 0.10.1",
  "ordered-float 2.10.0",
  "paste",
- "rand 0.8.5",
+ "rand 0.8.6",
  "regex",
  "sha2 0.10.8",
  "unicode-segmentation",
@@ -2234,7 +2234,7 @@ dependencies = [
 [[package]]
 name = "parquet"
 version = "13.0.0"
-source = "git+https://github.com/cube-js/arrow-rs.git?rev=837ddde06037034056b9faced3d8ea7073529cfc#837ddde06037034056b9faced3d8ea7073529cfc"
+source = "git+https://github.com/cube-js/arrow-rs.git?rev=d484adc1a79495624d659959f22fa4cd55ae2d3c#d484adc1a79495624d659959f22fa4cd55ae2d3c"
 dependencies = [
  "arrow",
  "base64 0.13.0",
@@ -2243,7 +2243,7 @@ dependencies = [
  "num",
  "num-bigint",
  "parquet-format",
- "rand 0.8.5",
+ "rand 0.8.6",
  "thrift",
 ]
 
@@ -2358,7 +2358,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d5285893bb5eb82e6aaf5d59ee909a06a16737a8970984dd7746ba9283498d6"
 dependencies = [
  "phf_shared 0.10.0",
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -2368,7 +2368,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1181c94580fa345f50f19d738aaa39c0ed30a600d95cb2d3e23f94266f14fbf"
 dependencies = [
  "phf_shared 0.11.1",
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -2471,7 +2471,7 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be97d76faf1bfab666e1375477b23fde79eccf0276e9b63b92a39d676a889ba9"
 dependencies = [
- "rand 0.8.5",
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -2625,9 +2625,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
  "libc",
  "rand_chacha",
