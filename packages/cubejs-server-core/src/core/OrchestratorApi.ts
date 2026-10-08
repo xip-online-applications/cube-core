@@ -88,7 +88,8 @@ export class OrchestratorApi {
   public async executeQuery(query: QueryBody) {
     const queryForLog = query.query?.replace(/\s+/g, ' ');
     const startQueryTime = (new Date()).getTime();
-    const securityContext = query.requestContext?.securityContext || query.context?.securityContext;
+    const securityContext = query.requestContext?.securityContext ||
+      (query.context as { securityContext?: any } | undefined)?.securityContext;
     const tenantIdentifier = securityContext?.tenantId || 'unknown';
     // Stamped onto the query body so it survives the trip through QueryCache/QueryQueue,
     // which otherwise strip requestContext down to a handful of whitelisted fields
