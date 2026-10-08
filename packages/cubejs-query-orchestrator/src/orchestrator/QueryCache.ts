@@ -399,7 +399,8 @@ export class QueryCache {
           tenantId: queryBody.tenantId,
           dataSource: queryBody.dataSource,
           persistent: queryBody.persistent,
-          skipRefreshKeyWaitForRenew: true,
+          // must-revalidate has to see a changed refresh key, so wait for it to renew.
+          skipRefreshKeyWaitForRenew: false,
         }
       );
     }
