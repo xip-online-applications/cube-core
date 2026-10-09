@@ -175,49 +175,56 @@ pub fn empty_vanilla_row(capacity: usize) -> VanillaRow {
     IndexMap::with_capacity_and_hasher(capacity, PrehashedBuildHasher)
 }
 
+const TIME_OUTPUT_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.3f";
+
+/// Offset-aware layouts. `%#z` accepts `+02`, `+0200` and `+02:00`; a space before the offset is
+/// optional, so `... +02:00` and `...+02:00` are both covered.
+const OFFSET_AWARE_FORMATS: &[&str] = &[
+    "%Y-%m-%d %H:%M:%S%.f%#z",
+    "%Y-%m-%dT%H:%M:%S%.f%#z",
+    "%Y-%m-%d %H:%M:%S%.f %#z",
+    "%Y-%m-%dT%H:%M:%S%.f %#z",
+];
+
+/// Layouts without an offset; the value is interpreted as UTC.
+const NAIVE_FORMATS: &[&str] = &[
+    "%Y-%m-%d %H:%M:%S%.f",
+    "%Y-%m-%dT%H:%M:%S%.f",
+    // Trailing zone *name* (e.g. `UTC`). chrono's `%Z` skips every non-whitespace character and
+    // discards it, so it must only be tried after the offset-aware layouts above.
+    "%Y-%m-%d %H:%M:%S%.f %Z",
+];
+
+fn parse_time_string(s: &str) -> Option<String> {
+    // Explicit offsets are applied: the output is always UTC.
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.naive_utc().format(TIME_OUTPUT_FORMAT).to_string());
+    }
+
+    for format in OFFSET_AWARE_FORMATS {
+        if let Ok(dt) = DateTime::parse_from_str(s, format) {
+            return Some(dt.naive_utc().format(TIME_OUTPUT_FORMAT).to_string());
+        }
+    }
+
+    for format in NAIVE_FORMATS {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(s, format) {
+            return Some(
+                Utc.from_utc_datetime(&dt)
+                    .format(TIME_OUTPUT_FORMAT)
+                    .to_string(),
+            );
+        }
+    }
+
+    None
+}
+
 /// Transform specified `value` with specified `type` to the network protocol type.
 pub fn transform_value(value: DBResponsePrimitive, type_: &str) -> DBResponsePrimitive {
     match value {
         DBResponsePrimitive::String(ref s) if type_ == "time" => {
-            let formatted = DateTime::parse_from_rfc3339(s)
-                .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3f").to_string())
-                .or_else(|_| {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f").map(|dt| {
-                        Utc.from_utc_datetime(&dt)
-                            .format("%Y-%m-%dT%H:%M:%S%.3f")
-                            .to_string()
-                    })
-                })
-                .or_else(|_| {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|dt| {
-                        Utc.from_utc_datetime(&dt)
-                            .format("%Y-%m-%dT%H:%M:%S%.3f")
-                            .to_string()
-                    })
-                })
-                .or_else(|_| {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").map(|dt| {
-                        Utc.from_utc_datetime(&dt)
-                            .format("%Y-%m-%dT%H:%M:%S%.3f")
-                            .to_string()
-                    })
-                })
-                .or_else(|_| {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f %Z").map(|dt| {
-                        Utc.from_utc_datetime(&dt)
-                            .format("%Y-%m-%dT%H:%M:%S%.3f")
-                            .to_string()
-                    })
-                })
-                .or_else(|_| {
-                    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f %:z").map(|dt| {
-                        Utc.from_utc_datetime(&dt)
-                            .format("%Y-%m-%dT%H:%M:%S%.3f")
-                            .to_string()
-                    })
-                })
-                .unwrap_or_else(|_| s.clone());
-            DBResponsePrimitive::String(formatted)
+            DBResponsePrimitive::String(parse_time_string(s).unwrap_or_else(|| s.clone()))
         }
         other => other,
     }
@@ -2426,6 +2433,31 @@ mod tests {
             result,
             DBResponsePrimitive::String("2024-01-01T12:30:15.123".to_string())
         );
+    }
+
+    #[test]
+    fn test_transform_value_string_with_non_utc_offset_is_shifted_to_utc() {
+        // Offsets must be applied, never silently dropped.
+        for (input, expected) in [
+            ("2026-10-08 13:14:55.841+02", "2026-10-08T11:14:55.841"),
+            ("2026-10-08 13:14:55+02", "2026-10-08T11:14:55.000"),
+            ("2026-10-08 13:14:55.841+0200", "2026-10-08T11:14:55.841"),
+            ("2026-10-08 13:14:55.841+02:00", "2026-10-08T11:14:55.841"),
+            ("2026-10-08 13:14:55.841 +02:00", "2026-10-08T11:14:55.841"),
+            ("2026-10-08T13:14:55.841+02:00", "2026-10-08T11:14:55.841"),
+            ("2026-10-08 13:14:55.84-03", "2026-10-08T16:14:55.840"),
+            ("2026-10-08 13:14:55.5+05:30", "2026-10-08T07:44:55.500"),
+            ("2026-10-08T13:14:55.841Z", "2026-10-08T13:14:55.841"),
+            ("2026-10-08 13:14:55.955497+02", "2026-10-08T11:14:55.955"),
+            ("2026-10-08 13:14:55.916+02", "2026-10-08T11:14:55.916"),
+        ] {
+            let result = transform_value(DBResponsePrimitive::String(input.to_string()), "time");
+            assert_eq!(
+                result,
+                DBResponsePrimitive::String(expected.to_string()),
+                "input: {input}"
+            );
+        }
     }
 
     #[test]
