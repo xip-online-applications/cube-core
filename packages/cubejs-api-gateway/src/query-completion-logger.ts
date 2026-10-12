@@ -1,6 +1,8 @@
+import { Tracer } from '@cubejs-backend/tracer';
 import {
   emitLog,
   getEnv,
+  getPodName,
   levelEnabled,
   LogLevel,
   queryExecutionTracker,
@@ -69,6 +71,8 @@ const QUOTED_LITERAL_RE = /'(?:[^']|'')*(?:'|$)|"(?:[^"]|"")*(?:"|$)/g;
 
 const TOKEN_RE = /^[A-Za-z][\w-]{0,63}$/;
 const TIMEOUT_RE = /time(d)?[\s_-]?out/i;
+
+const IN_FLIGHT_GAUGE_INTERVAL_MS = 1000;
 
 const DATA_ENDPOINTS = new Set<Endpoint>(['load']);
 
@@ -360,6 +364,10 @@ export class QueryCompletionLogger {
 
   protected inFlightCount = 0;
 
+  protected gaugeLastEmitted = 0;
+
+  protected gaugeTimer: NodeJS.Timeout | undefined;
+
   public constructor(opts: QueryCompletionLoggerOptions = {}) {
     const slowMs = opts.slowMs ?? getEnv('logSlowQueryMs');
     this.slowMs = typeof slowMs === 'number' && Number.isFinite(slowMs) ? slowMs : DEFAULT_SLOW_MS;
@@ -375,12 +383,75 @@ export class QueryCompletionLogger {
    */
   public begin(): () => void {
     this.inFlightCount++;
+    this.scheduleInFlightGauge();
     let released = false;
     return () => {
       if (released) return;
       released = true;
       this.inFlightCount--;
+      this.scheduleInFlightGauge();
     };
+  }
+
+  /**
+   * Emits the in-flight gauge at most once per second: immediately when the last emission was
+   * long enough ago, otherwise once more when the interval ends, so the final value is not lost.
+   * Never throws.
+   */
+  protected scheduleInFlightGauge(): void {
+    try {
+      if (this.gaugeTimer) return;
+
+      const wait = this.gaugeLastEmitted + IN_FLIGHT_GAUGE_INTERVAL_MS - Date.now();
+      if (wait <= 0) {
+        this.emitInFlightGauge();
+        return;
+      }
+
+      this.gaugeTimer = setTimeout(() => {
+        this.gaugeTimer = undefined;
+        this.emitInFlightGauge();
+      }, wait);
+      this.gaugeTimer.unref();
+    } catch {
+      // metrics must never break a request
+    }
+  }
+
+  protected emitInFlightGauge(): void {
+    this.gaugeLastEmitted = Date.now();
+
+    try {
+      Tracer.init().get().gauge('queries_in_flight', this.inFlightCount, { pod: getPodName() });
+    } catch {
+      // metrics must never break a request
+    }
+  }
+
+  /**
+   * Query duration histogram and request counter, tagged pod, tenant, endpoint, cache, status
+   * (never queryHash or cubes: unbounded cardinality). Never throws.
+   */
+  protected emitQueryMetrics(
+    input: CompletionInput,
+    context: Record<string, any>,
+    durationMs: number,
+    cache: string,
+  ): void {
+    try {
+      const tags = {
+        pod: getPodName(),
+        tenant: tenantIdOf(context),
+        endpoint: sanitizeToken(input.endpoint, 'unknown'),
+        cache,
+        status: Number.isInteger(input.status) ? String(input.status) : 'unknown',
+      };
+      const statsd = Tracer.init().get();
+      statsd.histogram('query.duration', durationMs, tags);
+      statsd.increment('queries', 1, tags);
+    } catch {
+      // metrics must never break a request
+    }
   }
 
   /**
@@ -422,6 +493,11 @@ export class QueryCompletionLogger {
       level = 'info';
     } else if (slow) {
       level = 'warn';
+    }
+
+    if (!isSqlApiInternal(sanitizeToken(input.method, 'INTERNAL'))) {
+      const cache = isRefresh ? 'unknown' : this.cacheOutcome(input, tracked, failed);
+      this.emitQueryMetrics(input, context, durationMs, cache);
     }
 
     const configured = currentLogLevel();
@@ -476,21 +552,7 @@ export class QueryCompletionLogger {
     const query = input.queryUnparsable ? undefined : input.query;
     const stats = queryStats(query);
 
-    let cache: string;
-    if (!DATA_ENDPOINTS.has(input.endpoint)) {
-      cache = 'unknown';
-    } else if (input.cacheMode === 'no-cache') {
-      cache = 'no-cache';
-    } else if (input.slowQuery) {
-      cache = 'stale';
-    } else if (tracked && tracked.executions > 0) {
-      cache = 'miss';
-    } else if (failed || input.error) {
-      // Nothing was served from the cache
-      cache = 'unknown';
-    } else {
-      cache = 'hit';
-    }
+    const cache = this.cacheOutcome(input, tracked, failed);
 
     const fields: Record<string, unknown> = {};
     if (tracked) {
@@ -521,6 +583,33 @@ export class QueryCompletionLogger {
     });
 
     return fields;
+  }
+
+  /**
+   * hit | miss | stale | no-cache | unknown
+   */
+  protected cacheOutcome(
+    input: CompletionInput,
+    tracked: { executions: number } | undefined,
+    failed: boolean,
+  ): string {
+    if (!DATA_ENDPOINTS.has(input.endpoint)) {
+      return 'unknown';
+    }
+    if (input.cacheMode === 'no-cache') {
+      return 'no-cache';
+    }
+    if (input.slowQuery) {
+      return 'stale';
+    }
+    if (tracked && tracked.executions > 0) {
+      return 'miss';
+    }
+    if (failed || input.error) {
+      // Nothing was served from the cache
+      return 'unknown';
+    }
+    return 'hit';
   }
 
   /**

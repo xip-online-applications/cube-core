@@ -13,6 +13,13 @@ export function levelEnabled(configured: LogLevel, level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= (LEVEL_ORDER[configured] ?? LEVEL_ORDER.info);
 }
 
+/**
+ * The pod (host) name used to tag metrics, 'unknown' when HOSTNAME is not set.
+ */
+export function getPodName(): string {
+  return process.env.HOSTNAME ?? 'unknown';
+}
+
 export function emitLog(level: LogLevel, event: string, fields: Record<string, unknown> = {}): void {
   const configured = (getEnv('logLevel') as LogLevel | undefined) ?? 'info';
   if (!levelEnabled(configured, level)) {

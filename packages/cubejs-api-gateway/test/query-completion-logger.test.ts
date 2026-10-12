@@ -10,6 +10,17 @@ import {
 import { CubejsHandlerError } from '../src/cubejs-handler-error';
 import { UserError } from '../src/user-error';
 
+const mockStatsd = {
+  histogram: jest.fn(),
+  increment: jest.fn(),
+  gauge: jest.fn(),
+};
+let mockTracerInit: jest.Mock;
+
+jest.mock('@cubejs-backend/tracer', () => ({
+  Tracer: { init: (...args: any[]) => mockTracerInit(...args) },
+}));
+
 const SECRET = 's3cr3t';
 
 const secretQuery = () => ({
@@ -580,5 +591,103 @@ describe('error message redaction', () => {
     const head = `${'y'.repeat(200)} `.repeat(2);
     const msg = message(query, { message: `${head}${'.'.repeat(78)}${value}${'z'.repeat(5000)}`, userFacing: true });
     expect(msg).not.toContain('Seeeeeeeee');
+  });
+});
+
+describe('QueryCompletionLogger metrics', () => {
+  const saved = { ...process.env };
+  const TAG_KEYS = ['cache', 'endpoint', 'pod', 'status', 'tenant'];
+
+  beforeEach(() => {
+    mockStatsd.histogram.mockReset();
+    mockStatsd.increment.mockReset();
+    mockStatsd.gauge.mockReset();
+    mockTracerInit = jest.fn(() => ({ get: () => mockStatsd }));
+    process.env.HOSTNAME = 'pod-x';
+    jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+
+    for (const k of Object.keys(process.env)) {
+      if (!(k in saved)) delete process.env[k];
+    }
+
+    Object.assign(process.env, saved);
+  });
+
+  it('emits duration and count with exactly the five tags', () => {
+    new QueryCompletionLogger().record(input());
+    expect(mockStatsd.histogram).toHaveBeenCalledTimes(1);
+    const [name, value, tags] = mockStatsd.histogram.mock.calls[0];
+    expect(name).toBe('query.duration');
+    expect(typeof value).toBe('number');
+    expect(Object.keys(tags).sort()).toEqual(TAG_KEYS);
+    expect(tags).toEqual({
+      pod: 'pod-x', tenant: 'tenant-a', endpoint: 'load', cache: 'hit', status: '200',
+    });
+    expect(mockStatsd.increment).toHaveBeenCalledWith('queries', 1, tags);
+  });
+
+  it('emits metrics regardless of log level', () => {
+    process.env.LOG_LEVEL = 'error';
+    new QueryCompletionLogger().record(input());
+    expect(mockStatsd.histogram).toHaveBeenCalledTimes(1);
+    expect(mockStatsd.increment).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits metrics for a scheduled refresh with cache unknown', () => {
+    new QueryCompletionLogger().record(input({ endpoint: 'run-scheduled-refresh', query: undefined }));
+    const tags = mockStatsd.increment.mock.calls[0][2];
+    expect(tags.endpoint).toBe('run-scheduled-refresh');
+    expect(tags.cache).toBe('unknown');
+    expect(mockStatsd.histogram).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits no metrics for SQL API internal calls', () => {
+    new QueryCompletionLogger().record(input({ method: 'SQL' }));
+    new QueryCompletionLogger().record(input({ method: 'INTERNAL' }));
+    expect(mockStatsd.histogram).not.toHaveBeenCalled();
+    expect(mockStatsd.increment).not.toHaveBeenCalled();
+  });
+
+  it('never throws when the tracer throws', () => {
+    mockTracerInit = jest.fn(() => { throw new Error('boom'); });
+    const logger = new QueryCompletionLogger();
+    expect(() => logger.record(input())).not.toThrow();
+    expect(() => logger.begin()()).not.toThrow();
+    mockTracerInit = jest.fn(() => ({ get: () => ({
+      histogram: () => { throw new Error('x'); },
+      increment: () => { throw new Error('x'); },
+      gauge: () => { throw new Error('x'); },
+    }) }));
+    expect(() => logger.record(input())).not.toThrow();
+    expect(() => logger.begin()()).not.toThrow();
+  });
+
+  it('emits the in-flight gauge throttled, with a trailing final value', () => {
+    jest.useFakeTimers();
+    const logger = new QueryCompletionLogger();
+    const r1 = logger.begin();
+    const r2 = logger.begin();
+    // leading emission only, the rest is coalesced
+    expect(mockStatsd.gauge).toHaveBeenCalledTimes(1);
+    expect(mockStatsd.gauge).toHaveBeenLastCalledWith('queries_in_flight', 1, { pod: 'pod-x' });
+    jest.advanceTimersByTime(1000);
+    expect(mockStatsd.gauge).toHaveBeenLastCalledWith('queries_in_flight', 2, { pod: 'pod-x' });
+    const values = mockStatsd.gauge.mock.calls.map((c) => c[1]);
+    expect(Math.max(...values)).toBe(2);
+    r1();
+    r2();
+    r2();
+    jest.advanceTimersByTime(1000);
+    expect(mockStatsd.gauge).toHaveBeenLastCalledWith('queries_in_flight', 0, { pod: 'pod-x' });
+    // nothing pending afterwards
+    const n = mockStatsd.gauge.mock.calls.length;
+    jest.advanceTimersByTime(5000);
+    expect(mockStatsd.gauge).toHaveBeenCalledTimes(n);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

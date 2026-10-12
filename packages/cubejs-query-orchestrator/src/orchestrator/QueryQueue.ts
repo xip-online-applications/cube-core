@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { getEnv, getProcessUid, LoggerFn, extractRequestUUID, queryExecutionTracker } from '@cubejs-backend/shared';
+import { getEnv, getPodName, getProcessUid, LoggerFn, extractRequestUUID, queryExecutionTracker } from '@cubejs-backend/shared';
 import {
   QueueDriverInterface,
   QueryKey,
@@ -881,6 +881,7 @@ export class QueryQueue {
       const tenantIdentifier = query.tenantId || 'unknown';
 
       Tracer.init().get().timing('time_in_queue', timeInQueue, {
+        pod: getPodName(),
         tenant: tenantIdentifier,
       });
 
@@ -1023,6 +1024,7 @@ export class QueryQueue {
         const duration = (new Date()).getTime() - startQueryTime;
 
         Tracer.init().get().timing('query_duration', duration, {
+          pod: getPodName(),
           tenant: tenantIdentifier,
         });
 

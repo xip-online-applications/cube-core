@@ -11,6 +11,7 @@ import {
   QueryOrchestratorOptions,
 } from '@cubejs-backend/query-orchestrator';
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
+import { getPodName } from '@cubejs-backend/shared';
 import { Tracer } from '@cubejs-backend/tracer';
 import { DatabaseType, RequestContext } from './types';
 
@@ -127,6 +128,7 @@ export class OrchestratorApi {
       });
 
       Tracer.init().get().histogram('resultset_rows', rowCountFromResult(data), {
+        pod: getPodName(),
         tenant: tenantIdentifier,
       });
 
@@ -175,10 +177,12 @@ export class OrchestratorApi {
           });
 
           Tracer.init().get().increment('slow_query', 1, {
+            pod: getPodName(),
             tenant: tenantIdentifier,
           });
 
           Tracer.init().get().histogram('resultset_rows', rowCountFromResult(fromCache), {
+            pod: getPodName(),
             tenant: tenantIdentifier,
           });
 

@@ -1,4 +1,4 @@
-import { levelEnabled, emitLog, emitLogRateLimited } from '../src/structured-log';
+import { levelEnabled, emitLog, emitLogRateLimited, getPodName } from '../src/structured-log';
 
 describe('structured-log', () => {
   const saved = { ...process.env };
@@ -59,5 +59,14 @@ describe('structured-log', () => {
     emitLogRateLimited('k-agg', 1000, 'warn', 'rl.event', { x: 1 });
     expect(lines()).toHaveLength(2);
     expect(lines()[1].count).toBe(5);
+  });
+
+  describe('getPodName', () => {
+    it('returns HOSTNAME, or unknown when unset', () => {
+      process.env.HOSTNAME = 'pod-1';
+      expect(getPodName()).toBe('pod-1');
+      delete process.env.HOSTNAME;
+      expect(getPodName()).toBe('unknown');
+    });
   });
 });

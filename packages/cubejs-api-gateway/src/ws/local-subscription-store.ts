@@ -1,3 +1,4 @@
+import { getPodName } from '@cubejs-backend/shared';
 import { Tracer } from '@cubejs-backend/tracer';
 
 interface LocalSubscriptionStoreOptions {
@@ -181,6 +182,7 @@ export class LocalSubscriptionStore {
     
     tenants.forEach(tenantIdentifier => {
       Tracer.init().get().gauge('subscriptions', subsPerTenant[tenantIdentifier], {
+        pod: getPodName(),
         tenant: tenantIdentifier,
       });
     });
