@@ -710,3 +710,41 @@ describe('the NODE_ENV deprecation warning', () => {
     expect(nodeEnvWarnings()).toHaveLength(1);
   });
 });
+
+describe('getEnv(logLevel / logSlowQueryMs / logDebugFullQuery)', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in saved)) delete process.env[k];
+    }
+    Object.assign(process.env, saved);
+  });
+
+  test('LOG_LEVEL wins over CUBEJS_LOG_LEVEL', () => {
+    process.env.LOG_LEVEL = 'debug';
+    process.env.CUBEJS_LOG_LEVEL = 'error';
+    expect(getEnv('logLevel')).toBe('debug');
+  });
+
+  test('falls back to CUBEJS_LOG_LEVEL, then undefined', () => {
+    delete process.env.LOG_LEVEL;
+    process.env.CUBEJS_LOG_LEVEL = 'error';
+    expect(getEnv('logLevel')).toBe('error');
+    delete process.env.CUBEJS_LOG_LEVEL;
+    expect(getEnv('logLevel')).toBeUndefined();
+  });
+
+  test('logSlowQueryMs defaults to 1000', () => {
+    delete process.env.LOG_SLOW_QUERY_MS;
+    expect(getEnv('logSlowQueryMs')).toBe(1000);
+    process.env.LOG_SLOW_QUERY_MS = '250';
+    expect(getEnv('logSlowQueryMs')).toBe(250);
+  });
+
+  test('logDebugFullQuery defaults to false', () => {
+    delete process.env.LOG_DEBUG_FULL_QUERY;
+    expect(getEnv('logDebugFullQuery')).toBe(false);
+    process.env.LOG_DEBUG_FULL_QUERY = 'true';
+    expect(getEnv('logDebugFullQuery')).toBe(true);
+  });
+});

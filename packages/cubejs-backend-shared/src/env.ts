@@ -348,7 +348,14 @@ const devMode = () => {
 
 const variables: Record<string, (...args: any) => any> = {
   devMode,
-  logLevel: () => get('CUBEJS_LOG_LEVEL').asString(),
+  // LOG_LEVEL wins, CUBEJS_LOG_LEVEL is the legacy fallback; undefined when neither is set
+  logLevel: () => get('LOG_LEVEL').asString() ?? get('CUBEJS_LOG_LEVEL').asString(),
+  logSlowQueryMs: () => get('LOG_SLOW_QUERY_MS')
+    .default('1000')
+    .asInt(),
+  logDebugFullQuery: () => get('LOG_DEBUG_FULL_QUERY')
+    .default('false')
+    .asBoolStrict(),
   // Off in development mode: there the console is the log sink and runnable SQL is wanted.
   // Callers that resolved dev mode themselves (CreateOptions.devServer beats the env var)
   // pass it in, so the default cannot disagree with the instance it is describing

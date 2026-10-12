@@ -1,4 +1,4 @@
-export type LogLevel = 'trace' | 'info' | 'warn' | 'error';
+export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 
 export type LoggerFnParams = {
   // It's possible to fill timestamp at the place of logging, otherwise, it will be filled in automatically
