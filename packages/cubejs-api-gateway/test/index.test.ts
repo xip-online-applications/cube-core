@@ -2024,11 +2024,11 @@ describe('query completion logging', () => {
     }
   }
 
-  const build = (options: Partial<ApiGatewayOptions> = {}, gatewayLogger: any = logger) => {
+  const build = (options: Partial<ApiGatewayOptions> = {}, gatewayLogger: any = logger, adapterApi: any = new AdapterApiMock()) => {
     const apiGateway = new ApiGatewayWithCompletionLogger(
       API_SECRET,
       compilerApi,
-      async () => new AdapterApiMock(),
+      async () => adapterApi,
       gatewayLogger,
       new DefaultEventEmitter(),
       {
@@ -2174,6 +2174,126 @@ describe('query completion logging', () => {
 
     expect(res.body.data).toBeDefined();
     expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  describe('emitted lines', () => {
+    const saved = { ...process.env };
+    let writeSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      process.env.LOG_LEVEL = 'debug';
+      delete process.env.LOG_DEBUG_FULL_QUERY;
+      writeSpy = jest.spyOn(process.stdout, 'write');
+    });
+
+    afterEach(() => {
+      writeSpy.mockRestore();
+      for (const k of Object.keys(process.env)) {
+        if (!(k in saved)) delete process.env[k];
+      }
+      Object.assign(process.env, saved);
+    });
+
+    const completedLines = () => writeSpy.mock.calls
+      .map(c => {
+        try {
+          return JSON.parse(String(c[0]));
+        } catch {
+          return undefined;
+        }
+      })
+      .filter(l => l && l.event === 'cube.query.completed');
+
+    test('Continue wait from the orchestrator is one warn line, not an error', async () => {
+      class ContinueWaitAdapterApi extends AdapterApiMock {
+        public async executeQuery(): Promise<any> {
+          // The orchestrator signals a long-poll timeout with a plain object, not an Error
+          // eslint-disable-next-line no-throw-literal
+          throw { error: 'Continue wait' };
+        }
+      }
+      process.env.LOG_LEVEL = 'info';
+      const { app } = build({}, logger, new ContinueWaitAdapterApi());
+
+      await request(app)
+        .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+        .set('Authorization', TOKEN)
+        .expect(200);
+
+      const lines = completedLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        level: 'warn',
+        slow: true,
+        status: 200,
+        error: { type: 'ContinueWait', timeout: true },
+      });
+    });
+
+    test('GET /sql with a JSON string logs the parsed query, hashed like the POST form', async () => {
+      const { app } = build();
+      const query = { measures: ['Foo.bar'], dimensions: ['Foo.id'] };
+
+      await request(app)
+        .get(`/cubejs-api/v1/sql?query=${encodeURIComponent(JSON.stringify(query))}`)
+        .set('Authorization', TOKEN)
+        .expect(200);
+      await request(app)
+        .post('/cubejs-api/v1/sql')
+        .set('Content-type', 'application/json')
+        .set('Authorization', TOKEN)
+        .send({ query })
+        .expect(200);
+
+      const [get, post] = completedLines();
+      expect(get).toMatchObject({ endpoint: 'sql', method: 'GET', cubes: ['Foo'], dimensionCount: 1, measureCount: 1 });
+      expect(post).toMatchObject({ endpoint: 'sql', method: 'POST', cubes: ['Foo'] });
+      expect(get.queryHash).toBe(post.queryHash);
+      expect(get.queryHash).not.toBe('unparsable00');
+    });
+
+    test('a malformed query string logs the unparsable hash', async () => {
+      const { app } = build();
+
+      await request(app)
+        .get('/cubejs-api/v1/load?query=NOT_A_JSON')
+        .set('Authorization', TOKEN)
+        .expect(400);
+      await request(app)
+        .get('/cubejs-api/v1/sql?query=%7Bbroken')
+        .set('Authorization', TOKEN)
+        .expect(400);
+
+      const lines = completedLines();
+      expect(lines).toHaveLength(2);
+      for (const line of lines) {
+        expect(line).toMatchObject({ level: 'error', status: 400, queryHash: 'unparsable00', cubes: [] });
+      }
+    });
+  });
+
+  test('SQL API internal meta and sql calls record no completion', async () => {
+    const { apiGateway } = build();
+    const context: any = { requestId: 'sql-api-1', securityContext: {} };
+
+    await apiGateway.meta({ context, res: jest.fn() });
+    await apiGateway.sql({ context, query: { measures: ['Foo.bar'] }, res: jest.fn() } as any);
+
+    expect(recordSpy).not.toHaveBeenCalled();
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('auth failure records the x-request-id', async () => {
+    const { app } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', 'foo')
+      .set('x-request-id', 'abc-2')
+      .expect(403);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0].context.requestId).toBe('abc-2');
   });
 
   test('no REST API Request line is logged by default', async () => {

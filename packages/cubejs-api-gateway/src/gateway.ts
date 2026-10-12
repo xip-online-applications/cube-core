@@ -820,8 +820,15 @@ class ApiGateway {
    */
   protected recordCompletion(input: Omit<CompletionInput, 'status' | 'error'>, failure?: { e: unknown }) {
     try {
+      // The SQL API's own planning calls (meta/sql from sql-server.ts) are not client requests
+      if (input.method === 'INTERNAL') {
+        return;
+      }
+
+      const completion = { ...input, ...this.queryForLog(input.query) };
+
       if (!failure) {
-        this.queryCompletionLogger.record({ ...input, status: 200 });
+        this.queryCompletionLogger.record({ ...completion, status: 200 });
         return;
       }
 
@@ -830,9 +837,47 @@ class ApiGateway {
         this.completionRecordedErrors.add(e);
       }
       const { status, error } = describeFailure(e);
-      this.queryCompletionLogger.record({ ...input, status, error });
+      this.queryCompletionLogger.record({ ...completion, status, error });
     } catch {
       // logging must never break a request
+    }
+  }
+
+  /**
+   * The query as the completion line should see it: a query string (GET, or a failure before
+   * parsing) is parsed for logging only. Never throws.
+   */
+  // parseQueryParam accepts the raw string at runtime; its type only lists parsed shapes
+  private queryForLog(query: unknown): { query?: unknown, queryUnparsable?: boolean } {
+    if (typeof query !== 'string') {
+      return { query };
+    }
+    if (!query || query === 'undefined') {
+      return { query: undefined };
+    }
+    try {
+      return { query: this.parseQueryParam(query as unknown as RequestQuery) };
+    } catch {
+      return { query: undefined, queryUnparsable: true };
+    }
+  }
+
+  /**
+   * A copy of the client's query for the completion line, taken before normalisation, which
+   * adds top-level keys (cacheMode, timezone) to the query object in place. Shallow on purpose:
+   * normalisation only touches top-level keys. Never throws.
+   */
+  private snapshotQueryForLog(query: unknown): unknown {
+    try {
+      if (Array.isArray(query)) {
+        return query.map((q) => (q && typeof q === 'object' && !Array.isArray(q) ? { ...q } : q));
+      }
+      if (query && typeof query === 'object') {
+        return { ...query };
+      }
+      return query;
+    } catch {
+      return undefined;
     }
   }
 
@@ -843,7 +888,7 @@ class ApiGateway {
   protected recordEarlyFailure(req: Request, e: unknown, status?: number) {
     try {
       this.recordRequestFailure({
-        context: req.context,
+        context: req.context || { requestId: this.requestIdForLog(req) },
         endpoint: endpointForPath(req.path, this.basePath),
         method: resolveMethod(req.method, undefined),
         startedAt: req.requestStarted,
@@ -852,6 +897,21 @@ class ApiGateway {
       });
     } catch {
       // logging must never break a request
+    }
+  }
+
+  /**
+   * The client's request id (x-request-id / traceparent) for a request that failed before its
+   * context was built; undefined when it sent none or an invalid one.
+   */
+  private requestIdForLog(req: Request): string | undefined {
+    try {
+      if (!req.get('x-request-id') && !req.get('traceparent')) {
+        return undefined;
+      }
+      return getRequestIdFromRequest(req);
+    } catch {
+      return undefined;
     }
   }
 
@@ -1809,6 +1869,7 @@ class ApiGateway {
   }: QueryRequest) {
     const requestStarted = new Date();
     const releaseInFlight = this.queryCompletionLogger.begin();
+    const queryForLog = this.snapshotQueryForLog(query);
     let failure: { e: unknown } | undefined;
     let normalizedQueryType: string | undefined;
 
@@ -1850,7 +1911,7 @@ class ApiGateway {
         endpoint: 'sql',
         method: resolveMethod(httpMethod, apiType ?? context?.apiType),
         startedAt: requestStarted,
-        query,
+        query: queryForLog,
         queryType: normalizedQueryType,
       }, failure);
     }
@@ -2375,6 +2436,7 @@ class ApiGateway {
     } = request;
     const requestStarted = new Date();
     const releaseInFlight = this.queryCompletionLogger.begin();
+    const queryForLog = this.snapshotQueryForLog(request.query);
     let failure: { e: unknown } | undefined;
     let normalizedQueryType: string | undefined;
     let slowQuery = false;
@@ -2500,7 +2562,7 @@ class ApiGateway {
         endpoint: 'load',
         method: resolveMethod(httpMethod, apiType),
         startedAt: requestStarted,
-        query: query ?? request.query,
+        query: queryForLog,
         queryType: normalizedQueryType,
         cacheMode,
         slowQuery,

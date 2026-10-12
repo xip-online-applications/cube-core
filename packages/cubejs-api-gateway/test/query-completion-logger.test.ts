@@ -316,20 +316,87 @@ describe('QueryCompletionLogger', () => {
     expect(line).toMatchObject({ level: 'error', status: 403, cubes: [], queryType: null, cache: 'unknown' });
   });
 
-  test('scheduled refresh is a refresh cycle event', () => {
-    process.env.LOG_LEVEL = 'debug';
+  const REFRESH_KEYS = [
+    'ts', 'level', 'event', 'pod', 'requestId', 'tenantId', 'source', 'endpoint', 'method', 'status', 'durationMs',
+  ];
+
+  test('scheduled refresh is an info refresh cycle event with a reduced field set, even when slow', () => {
+    process.env.LOG_LEVEL = 'info';
+    new QueryCompletionLogger({ slowMs: 10 }).record(input({
+      endpoint: 'run-scheduled-refresh',
+      method: 'GET',
+      query: undefined,
+      startedAt: msAgo(50),
+    }));
+    const [line] = lines();
+    expect(Object.keys(line).sort()).toEqual([...REFRESH_KEYS].sort());
+    expect(line).toMatchObject({
+      level: 'info',
+      event: 'cube.refresh_cycle',
+      source: 'scheduled-refresh',
+      endpoint: 'run-scheduled-refresh',
+      method: 'GET',
+      status: 200,
+    });
+  });
+
+  test('failed scheduled refresh is an error refresh cycle event', () => {
+    process.env.LOG_LEVEL = 'info';
     new QueryCompletionLogger({ slowMs: 1000 }).record(input({
       endpoint: 'run-scheduled-refresh',
       method: 'GET',
       query: undefined,
+      status: 403,
+      error: { message: 'API scope is missing: jobs', type: 'Forbidden', userFacing: true },
     }));
     const [line] = lines();
+    expect(Object.keys(line).sort()).toEqual([...REFRESH_KEYS, 'error'].sort());
+    expect(line).toMatchObject({ level: 'error', event: 'cube.refresh_cycle', status: 403 });
+    expect(line.error.message).toBe('API scope is missing: jobs');
+  });
+
+  test('scheduled refresh success is not logged at warn', () => {
+    process.env.LOG_LEVEL = 'warn';
+    new QueryCompletionLogger({ slowMs: 10 }).record(input({
+      endpoint: 'run-scheduled-refresh', method: 'GET', query: undefined, startedAt: msAgo(50),
+    }));
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  test('Continue wait is a slow warn line, not an error', () => {
+    process.env.LOG_LEVEL = 'info';
+    const { status, error } = describeFailure({ error: 'Continue wait' });
+    new QueryCompletionLogger({ slowMs: 1000 }).record(input({ status, error }));
+    const [line] = lines();
     expect(line).toMatchObject({
-      event: 'cube.refresh_cycle',
-      source: 'scheduled-refresh',
-      endpoint: 'run-scheduled-refresh',
-      cache: 'unknown',
+      level: 'warn',
+      slow: true,
+      status: 200,
+      error: { type: 'ContinueWait', timeout: true, message: 'Continue wait' },
     });
+    expect(typeof line.querySummary).toBe('string');
+  });
+
+  test('an unparsable query gets a distinct hash and empty stats', () => {
+    process.env.LOG_LEVEL = 'info';
+    const logger = new QueryCompletionLogger({ slowMs: 1000 });
+    logger.record(input({ query: undefined, queryUnparsable: true, status: 400, error: { message: 'bad', userFacing: true } }));
+    logger.record(input({ query: undefined, status: 400, error: { message: 'bad', userFacing: true } }));
+    const [unparsable, missing] = lines();
+    expect(unparsable).toMatchObject({ queryHash: 'unparsable00', cubes: [], dimensionCount: 0 });
+    expect(missing.queryHash).not.toBe('unparsable00');
+  });
+
+  test('unparsable query: quoted literals in a user error are masked', () => {
+    process.env.LOG_LEVEL = 'info';
+    new QueryCompletionLogger({ slowMs: 1000 }).record(input({
+      query: undefined,
+      queryUnparsable: true,
+      status: 400,
+      // Node echoes the input with its inner quotes unescaped
+      error: { message: `Unexpected token, "{"values":["${SECRET}" is not valid JSON`, userFacing: true },
+    }));
+    expect(rawLines()[0]).not.toContain(SECRET);
   });
 
   test('missing HOSTNAME and tenantId give null and "unknown"', () => {
@@ -357,17 +424,19 @@ describe('QueryCompletionLogger', () => {
 
 describe('describeFailure mirrors handleError status mapping', () => {
   test.each([
-    ['CubejsHandlerError', new CubejsHandlerError(403, 'Forbidden', 'nope'), 403, 'Forbidden', false],
-    ['UserError', new UserError('bad query'), 400, 'User Error', false],
-    ['Continue wait', { error: 'Continue wait' }, 200, 'ContinueWait', true],
-    ['orchestrator error', { error: 'db exploded', message: 'db exploded' }, 400, 'OrchestratorError', false],
-    ['plain Error', new TypeError('boom'), 500, 'TypeError', false],
-    ['typed object', { type: 'CustomType', message: 'x' }, 500, 'CustomType', false],
-  ])('%s', (_name, e, status, type, timeout) => {
+    ['CubejsHandlerError', new CubejsHandlerError(403, 'Forbidden', 'nope'), 403, 'Forbidden', false, true],
+    ['UserError', new UserError('bad query'), 400, 'User Error', false, true],
+    ['Continue wait', { error: 'Continue wait' }, 200, 'ContinueWait', true, true],
+    ['orchestrator error', { error: 'db exploded', message: 'db exploded' }, 400, 'OrchestratorError', false, false],
+    ['plain Error', new TypeError('boom'), 500, 'TypeError', false, false],
+    ['typed object', { type: 'CustomType', message: 'x' }, 500, 'CustomType', false, false],
+    ['UserError-typed object', { type: 'UserError', message: 'x' }, 400, 'UserError', false, true],
+  ])('%s', (_name, e, status, type, timeout, userFacing) => {
     const result = describeFailure(e);
     expect(result.status).toBe(status);
     expect(result.error.type).toBe(type);
     expect(result.error.timeout).toBe(timeout);
+    expect(Boolean(result.error.userFacing)).toBe(userFacing);
     expect(typeof result.error.message).toBe('string');
   });
 
@@ -397,5 +466,119 @@ describe('request helpers', () => {
     expect(resolveMethod(undefined, 'ws')).toBe('WS');
     expect(resolveMethod(undefined, 'rest')).toBe('REST');
     expect(resolveMethod(undefined, undefined)).toBe('INTERNAL');
+  });
+});
+
+describe('error message redaction', () => {
+  const saved = { ...process.env };
+  let writeSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    process.env.LOG_LEVEL = 'info';
+    delete process.env.LOG_DEBUG_FULL_QUERY;
+    writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    writeSpy.mockRestore();
+    for (const k of Object.keys(process.env)) {
+      if (!(k in saved)) delete process.env[k];
+    }
+    Object.assign(process.env, saved);
+  });
+
+  const message = (query: unknown, error: CompletionInput['error']): string => {
+    writeSpy.mockClear();
+    new QueryCompletionLogger({ slowMs: 1000 }).record({
+      context: { requestId: 'redact' },
+      endpoint: 'load',
+      method: 'GET',
+      status: 400,
+      startedAt: new Date(),
+      query,
+      error,
+    });
+    return JSON.parse(String(writeSpy.mock.calls[0][0])).error.message;
+  };
+
+  test('user errors keep their text but lose dateRange and compareDateRange values', () => {
+    const query = {
+      measures: ['Orders.count'],
+      timeDimensions: [
+        { dimension: 'Orders.createdAt', dateRange: ['2031-04-05', '2031-06-07'] },
+        { dimension: 'Orders.updatedAt', dateRange: 'last 17 days', compareDateRange: [['2029-01-02', '2029-02-03'], 'this year'] },
+      ],
+    };
+    const msg = message(query, {
+      message: 'Bad range 2031-04-05 to 2031-06-07, last 17 days vs 2029-01-02..2029-02-03 this year',
+      userFacing: true,
+    });
+    for (const v of ['2031-04-05', '2031-06-07', 'last 17 days', '2029-01-02', '2029-02-03', 'this year']) {
+      expect(msg).not.toContain(v);
+    }
+    expect(msg).toContain('Bad range');
+  });
+
+  test('numeric values are redacted as whole tokens only', () => {
+    const query = { measures: ['Orders.count'], filters: [{ member: 'Orders.amount', operator: 'gt', values: ['42', 7] }] };
+    const msg = message(query, { message: 'value 42 is out of range at 1420, 7 too; v7 stays', userFacing: true });
+    expect(msg).toBe('value <redacted> is out of range at 1420, <redacted> too; v7 stays');
+  });
+
+  test('short string values are redacted when quoted', () => {
+    const query = { measures: ['Orders.count'], filters: [{ member: 'Orders.code', operator: 'equals', values: ['ab', "x'y"] }] };
+    const msg = message(query, { message: `unknown code 'ab' and "ab" and 'x''y'; ab stays bare`, userFacing: true });
+    expect(msg).not.toContain("'ab'");
+    expect(msg).not.toContain('"ab"');
+    expect(msg).not.toContain("x''y");
+    expect(msg).toContain('ab stays bare');
+  });
+
+  test('values are taken from every filter depth', () => {
+    const msg = message(
+      { filters: [{ or: [{ and: [{ member: 'A.b', operator: 'equals', values: ['deepvalue'] }] }] }] },
+      { message: 'no deepvalue here', userFacing: true },
+    );
+    expect(msg).toBe('no <redacted> here');
+  });
+
+  test('other errors mask every quoted literal', () => {
+    const msg = message(
+      { measures: ['Orders.count'] },
+      { message: `ERROR: syntax near ... WHERE x = 'O''Brien' AND "col" = 'a' ...`, type: 'OrchestratorError' },
+    );
+    expect(msg).not.toContain('Brien');
+    expect(msg).not.toContain('col');
+    expect(msg).toContain("WHERE x = ? AND ? = ?");
+  });
+
+  test('other errors mask an unterminated quoted literal', () => {
+    const msg = message({}, { message: `ERROR at 'secret-tail-without-end`, type: 'Error' });
+    expect(msg).toBe('ERROR at ?');
+  });
+
+  test('a 1MB message with 1000 filter values is bounded and fast', () => {
+    const values = Array.from({ length: 1000 }, (_, i) => `value-${i}-${'z'.repeat(20)}`);
+    const query = { measures: ['Orders.count'], filters: [{ member: 'Orders.status', operator: 'equals', values }] };
+    const big = `${values.join(' ')} ${'x'.repeat(1024 * 1024)}`;
+    for (const userFacing of [true, false]) {
+      const started = Date.now();
+      const msg = message(query, { message: big, userFacing });
+      expect(Date.now() - started).toBeLessThan(200);
+      expect(msg.length).toBeLessThanOrEqual(300);
+      for (const v of values) {
+        expect(msg).not.toContain(v);
+      }
+    }
+  });
+
+  test('a value cut at the bounded prefix does not leak partially', () => {
+    const value = `S${'e'.repeat(40)}cret`;
+    const query = { filters: [{ member: 'A.b', operator: 'equals', values: [value, 'y'.repeat(200)] }] };
+    // Shrinking replacements before the cut must not pull a partial value into the output
+    // 402 chars that shrink to 22, then the value straddles the 500-char prefix (300 + longest value)
+    const head = `${'y'.repeat(200)} `.repeat(2);
+    const msg = message(query, { message: `${head}${'.'.repeat(78)}${value}${'z'.repeat(5000)}`, userFacing: true });
+    expect(msg).not.toContain('Seeeeeeeee');
   });
 });
