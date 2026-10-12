@@ -124,35 +124,49 @@ const resolveProdLevel = ({ level, error, warning }: LoggerFnParams): LogLevel =
   return 'debug';
 };
 
-export const prodLogger = (filterByLevel: LogLevel) => (event: string, params: LoggerFnParams): void => {
-  const level = resolveProdLevel(params);
-
-  if (!levelEnabled(filterByLevel.toLowerCase() as LogLevel, level)) {
-    return;
+const safeString = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
   }
-
-  const {
-    level: _level, timestamp, message: _message, event: _event, pod: _pod, ts: _ts, ...restParams
-  } = params as LoggerFnParams & Record<string, unknown>;
-
-  const line = {
-    ...restParams,
-    ts: timestamp ?? new Date().toISOString(),
-    level,
-    event,
-    pod: process.env.HOSTNAME ?? null,
-  };
-
-  let serialized: string;
   try {
-    serialized = JSON.stringify(line, safeReplacer());
+    return String(value);
   } catch (e) {
-    serialized = JSON.stringify({
-      ts: line.ts, level, event, pod: line.pod, serializationError: true,
-    });
+    return '[unserializable]';
   }
+};
 
-  process.stdout.write(`${serialized}\n`);
+export const prodLogger = (filterByLevel: LogLevel) => (event: string, params: LoggerFnParams): void => {
+  // Logging must never break a request: nothing below is allowed to throw
+  try {
+    const level = resolveProdLevel(params);
+
+    if (!levelEnabled(filterByLevel.toLowerCase() as LogLevel, level)) {
+      return;
+    }
+
+    const {
+      level: _level, timestamp, message: _message, event: _event, pod: _pod, ts: _ts, ...restParams
+    } = params as LoggerFnParams & Record<string, unknown>;
+
+    const ts = timestamp === undefined ? new Date().toISOString() : safeString(timestamp);
+    const eventName = safeString(event);
+    const pod = process.env.HOSTNAME ?? null;
+
+    let serialized: string;
+    try {
+      serialized = JSON.stringify({
+        ...restParams, ts, level, event: eventName, pod,
+      }, safeReplacer());
+    } catch (e) {
+      serialized = JSON.stringify({
+        ts, level, event: eventName, pod, serializationError: true,
+      });
+    }
+
+    process.stdout.write(`${serialized}\n`);
+  } catch (e) {
+    // swallow
+  }
 };
 
 const STACK_LIMIT = 2000;

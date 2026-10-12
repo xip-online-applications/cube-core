@@ -138,6 +138,28 @@ describe('prodLogger', () => {
     expect(parsed).toMatchObject({ event: 'z', level: 'info', serializationError: true });
   });
 
+  test('never throws on non-string event or timestamp', () => {
+    const circ: any = {};
+    circ.self = circ;
+    const logger = prodLogger('info') as any;
+    expect(() => logger(BigInt(1), { level: 'info' })).not.toThrow();
+    expect(() => logger(circ, { level: 'info' })).not.toThrow();
+    expect(() => logger(Symbol('s'), { level: 'info' })).not.toThrow();
+    expect(() => logger('t', { level: 'info', timestamp: BigInt(2), bad: { toJSON() { throw new Error('x'); } } })).not.toThrow();
+    expect(() => logger('t2', { level: 'info', timestamp: circ, bad: { toJSON() { throw new Error('x'); } } })).not.toThrow();
+    const out = lines();
+    expect(out.length).toBeGreaterThanOrEqual(5);
+    for (const l of out) {
+      expect(() => JSON.parse(l)).not.toThrow();
+    }
+  });
+
+  test('redaction + prodLogger never writes Error secrets', () => {
+    withLogRedaction(prodLogger('debug'))('e', { error: new Error("boom 's3cr3t'") });
+    expect(writes.join('')).not.toContain('s3cr3t');
+    expect(lines()).toHaveLength(1);
+  });
+
   test('logStartup emits cube.startup once', () => {
     const fn = jest.fn();
     logStartup(fn, { version: '1.0.0', devMode: false });
