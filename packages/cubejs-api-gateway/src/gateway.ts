@@ -105,6 +105,7 @@ import {
   describeFailure,
   Endpoint,
   endpointForPath,
+  isSqlApiInternal,
   QueryCompletionLogger,
   resolveMethod,
 } from './query-completion-logger';
@@ -786,7 +787,8 @@ class ApiGateway {
     httpMethod?: string,
   }) {
     const requestStarted = new Date();
-    const releaseInFlight = this.queryCompletionLogger.begin();
+    const method = resolveMethod(httpMethod, context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
     let failure: { e: unknown } | undefined;
 
     try {
@@ -808,9 +810,24 @@ class ApiGateway {
       this.recordCompletion({
         context,
         endpoint: 'run-scheduled-refresh',
-        method: resolveMethod(httpMethod, context?.apiType),
+        method,
         startedAt: requestStarted,
       }, failure);
+    }
+  }
+
+  /**
+   * Marks a request as in flight, unless it is an SQL API planning call (see `isSqlApiInternal`).
+   * Returns the release function.
+   */
+  protected beginCompletion(method: string): () => void {
+    try {
+      if (isSqlApiInternal(method)) {
+        return () => undefined;
+      }
+      return this.queryCompletionLogger.begin();
+    } catch {
+      return () => undefined;
     }
   }
 
@@ -820,8 +837,7 @@ class ApiGateway {
    */
   protected recordCompletion(input: Omit<CompletionInput, 'status' | 'error'>, failure?: { e: unknown }) {
     try {
-      // The SQL API's own planning calls (meta/sql from sql-server.ts) are not client requests
-      if (input.method === 'INTERNAL') {
+      if (isSqlApiInternal(input.method)) {
         return;
       }
 
@@ -996,16 +1012,18 @@ class ApiGateway {
     };
   }
 
-  public async meta({ context, res, includeCompilerId, onlyCompilerId, onlyViews, httpMethod }: {
+  public async meta({ context, res, includeCompilerId, onlyCompilerId, onlyViews, apiType, httpMethod }: {
     context: RequestContext,
     res: MetaResponseResultFn,
     includeCompilerId?: boolean,
     onlyCompilerId?: boolean,
     onlyViews?: boolean,
+    apiType?: string,
     httpMethod?: string,
   }) {
     const requestStarted = new Date();
-    const releaseInFlight = this.queryCompletionLogger.begin();
+    const method = resolveMethod(httpMethod, apiType ?? context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
     let failure: { e: unknown } | undefined;
 
     try {
@@ -1054,7 +1072,7 @@ class ApiGateway {
       this.recordCompletion({
         context,
         endpoint: 'meta',
-        method: resolveMethod(httpMethod, context?.apiType),
+        method,
         startedAt: requestStarted,
       }, failure);
     }
@@ -1068,7 +1086,8 @@ class ApiGateway {
     httpMethod?: string,
   }) {
     const requestStarted = new Date();
-    const releaseInFlight = this.queryCompletionLogger.begin();
+    const method = resolveMethod(httpMethod, apiType ?? context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
     let failure: { e: unknown } | undefined;
 
     try {
@@ -1113,7 +1132,7 @@ class ApiGateway {
       this.recordCompletion({
         context,
         endpoint: 'meta',
-        method: resolveMethod(httpMethod, apiType ?? context?.apiType),
+        method,
         startedAt: requestStarted,
       }, failure);
     }
@@ -1868,7 +1887,8 @@ class ApiGateway {
     httpMethod,
   }: QueryRequest) {
     const requestStarted = new Date();
-    const releaseInFlight = this.queryCompletionLogger.begin();
+    const method = resolveMethod(httpMethod, apiType ?? context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
     const queryForLog = this.snapshotQueryForLog(query);
     let failure: { e: unknown } | undefined;
     let normalizedQueryType: string | undefined;
@@ -1909,7 +1929,7 @@ class ApiGateway {
       this.recordCompletion({
         context,
         endpoint: 'sql',
-        method: resolveMethod(httpMethod, apiType ?? context?.apiType),
+        method,
         startedAt: requestStarted,
         query: queryForLog,
         queryType: normalizedQueryType,
@@ -2435,7 +2455,8 @@ class ApiGateway {
       ...props
     } = request;
     const requestStarted = new Date();
-    const releaseInFlight = this.queryCompletionLogger.begin();
+    const method = resolveMethod(httpMethod, apiType);
+    const releaseInFlight = this.beginCompletion(method);
     const queryForLog = this.snapshotQueryForLog(request.query);
     let failure: { e: unknown } | undefined;
     let normalizedQueryType: string | undefined;
@@ -2560,7 +2581,7 @@ class ApiGateway {
       this.recordCompletion({
         context,
         endpoint: 'load',
-        method: resolveMethod(httpMethod, apiType),
+        method,
         startedAt: requestStarted,
         query: queryForLog,
         queryType: normalizedQueryType,

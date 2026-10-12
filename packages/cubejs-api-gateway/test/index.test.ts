@@ -2283,6 +2283,58 @@ describe('query completion logging', () => {
     expect(apiGateway.completionLogger.inFlight).toBe(0);
   });
 
+  test('SQL API planning calls (as sql-server.ts makes them) record nothing and are not in flight', async () => {
+    const { apiGateway } = build();
+    const context: any = { requestId: 'sql-api-2', securityContext: {} };
+    const inFlightDuringRes: number[] = [];
+    const res = jest.fn(() => {
+      inFlightDuringRes.push(apiGateway.completionLogger.inFlight);
+    });
+
+    // Mirrors sql-server.ts `meta`
+    await apiGateway.meta({ context, res, includeCompilerId: true, onlyCompilerId: false, apiType: 'sql' });
+    // Mirrors sql-server.ts `sql`
+    await apiGateway.sql({
+      query: { measures: ['Foo.bar'] },
+      memberToAlias: undefined,
+      expressionParams: undefined,
+      exportAnnotatedSql: true,
+      memberExpressions: true,
+      disableExternalPreAggregations: true,
+      queryType: 'multi',
+      disableLimitEnforcing: true,
+      context,
+      res,
+      apiType: 'sql',
+    });
+
+    expect(res).toHaveBeenCalledTimes(2);
+    expect(inFlightDuringRes).toEqual([0, 0]);
+    expect(recordSpy).not.toHaveBeenCalled();
+  });
+
+  test('REST /sql and /meta are in flight while responding', async () => {
+    const { app, apiGateway } = build();
+    const beginSpy = jest.spyOn(QueryCompletionLogger.prototype, 'begin');
+
+    try {
+      await request(app)
+        .get(`/cubejs-api/v1/sql?query=${encodeURIComponent(JSON.stringify({ measures: ['Foo.bar'] }))}`)
+        .set('Authorization', TOKEN)
+        .expect(200);
+      await request(app)
+        .get('/cubejs-api/v1/meta')
+        .set('Authorization', TOKEN)
+        .expect(200);
+
+      expect(beginSpy).toHaveBeenCalledTimes(2);
+      expect(records().map(r => r.endpoint)).toEqual(['sql', 'meta']);
+      expect(apiGateway.completionLogger.inFlight).toBe(0);
+    } finally {
+      beginSpy.mockRestore();
+    }
+  });
+
   test('auth failure records the x-request-id', async () => {
     const { app } = build();
 

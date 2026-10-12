@@ -197,7 +197,9 @@ export class SQLServer {
                 }
               },
               includeCompilerId: true,
-              onlyCompilerId
+              onlyCompilerId,
+              // Marks the call as SQL API planning: no completion line (see isSqlApiInternal)
+              apiType: 'sql',
             });
           } catch (e) {
             reject(e);

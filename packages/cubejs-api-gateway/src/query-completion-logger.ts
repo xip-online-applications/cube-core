@@ -204,6 +204,16 @@ export function resolveMethod(httpMethod: unknown, apiType: unknown): string {
 }
 
 /**
+ * Whether a call comes from the SQL API's own planning (sql-server.ts calls `sql` and `meta`
+ * with apiType 'sql'), or from code with neither an HTTP method nor an api type. Such calls
+ * are not client requests: they get no completion line and are not counted in flight.
+ * `method` is the result of `resolveMethod`.
+ */
+export function isSqlApiInternal(method: string): boolean {
+  return method === 'SQL' || method === 'INTERNAL';
+}
+
+/**
  * Values of a query (or array of queries) that may be sensitive: filter values at every
  * and/or depth, and timeDimensions dateRange / compareDateRange values.
  */
