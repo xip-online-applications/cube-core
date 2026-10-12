@@ -20,6 +20,7 @@ import {
 } from './mocks';
 import { ApiScopesTuple } from '../src/types/auth';
 import { PreAggJob } from '../src/types/request';
+import { QueryCompletionLogger, CompletionInput } from '../src/query-completion-logger';
 
 // The redaction pass lives in the native module; only its plumbing is under test here.
 // A Proxy rather than a spread: the module's exports are non-enumerable getters.
@@ -2011,5 +2012,179 @@ describe('API Gateway', () => {
       expect(res.body.external).toBe(true);
       expect(res.body.usedPreAggregations).toEqual(usedPreAggregations);
     });
+  });
+});
+
+describe('query completion logging', () => {
+  const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M';
+
+  class ApiGatewayWithCompletionLogger extends ApiGateway {
+    public get completionLogger(): QueryCompletionLogger {
+      return this.queryCompletionLogger;
+    }
+  }
+
+  const build = (options: Partial<ApiGatewayOptions> = {}, gatewayLogger: any = logger) => {
+    const apiGateway = new ApiGatewayWithCompletionLogger(
+      API_SECRET,
+      compilerApi,
+      async () => new AdapterApiMock(),
+      gatewayLogger,
+      new DefaultEventEmitter(),
+      {
+        standalone: true,
+        dataSourceStorage: new DataSourceStorageMock(),
+        basePath: '/cubejs-api',
+        refreshScheduler: {},
+        ...options,
+      } as ApiGatewayOptions,
+    );
+    const app = express();
+    app.use(express.json());
+    apiGateway.initApp(app);
+    return { app, apiGateway };
+  };
+
+  let recordSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    recordSpy = jest.spyOn(QueryCompletionLogger.prototype, 'record');
+  });
+
+  afterEach(() => {
+    recordSpy.mockRestore();
+  });
+
+  const records = (): CompletionInput[] => recordSpy.mock.calls.map(c => c[0]);
+
+  test('successful /load records exactly one completion and releases in-flight', async () => {
+    const { app, apiGateway } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', method: 'GET', status: 200 });
+    expect(records()[0].error).toBeUndefined();
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('POST /load records the POST method', async () => {
+    const { app } = build();
+
+    await request(app)
+      .post('/cubejs-api/v1/load')
+      .set('Content-type', 'application/json')
+      .set('Authorization', TOKEN)
+      .send({ query: { measures: ['Foo.bar'] }, cache: 'no-cache' })
+      .expect(200);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', method: 'POST', status: 200, cacheMode: 'no-cache' });
+  });
+
+  test('failing /load records exactly one completion with the error and releases in-flight', async () => {
+    const { app, apiGateway } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={}')
+      .set('Authorization', TOKEN)
+      .expect(400);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', status: 400 });
+    expect(records()[0].error?.message).toContain('Query should contain either measures');
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('x-request-id becomes the requestId of the record', async () => {
+    const { app } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .set('x-request-id', 'abc-1')
+      .expect(200);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0].context.requestId).toBe('abc-1');
+  });
+
+  test('auth failure before a query exists records one completion', async () => {
+    const { app, apiGateway } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', 'foo')
+      .expect(403);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', method: 'GET', status: 403 });
+    expect(records()[0].query).toBeUndefined();
+    expect(records()[0].error?.message).toBe('Invalid token');
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('request context failure records one completion', async () => {
+    const { app } = build({
+      extendContext: () => {
+        throw new Error('Server should not crash');
+      },
+    });
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(500);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', status: 500 });
+  });
+
+  test('/sql and /meta record one completion each', async () => {
+    const { app } = build();
+
+    await request(app)
+      .get(`/cubejs-api/v1/sql?query=${encodeURIComponent(JSON.stringify({ measures: ['Foo.bar'] }))}`)
+      .set('Authorization', TOKEN)
+      .expect(200);
+    await request(app)
+      .get('/cubejs-api/v1/meta')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(records().map(r => [r.endpoint, r.method, r.status])).toEqual([
+      ['sql', 'GET', 200],
+      ['meta', 'GET', 200],
+    ]);
+  });
+
+  test('a throwing completion logger does not break the response', async () => {
+    recordSpy.mockImplementation(() => {
+      throw new Error('logger exploded');
+    });
+    const { app, apiGateway } = build();
+
+    const res = await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(res.body.data).toBeDefined();
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('no REST API Request line is logged by default', async () => {
+    const gatewayLogger = jest.fn();
+    const { app } = build({}, gatewayLogger);
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(gatewayLogger.mock.calls.map(c => c[0])).not.toContain('REST API Request');
   });
 });

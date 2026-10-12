@@ -8,6 +8,7 @@ import { isValidRequestId } from '@cubejs-backend/shared';
 import { UserError } from '../user-error';
 import { ExtendedRequestContext, ContextAcceptorFn } from '../interfaces';
 import { CubejsHandlerError } from '../cubejs-handler-error';
+import { Endpoint, endpointForWsMethod } from '../query-completion-logger';
 import {
   authMessageSchema,
   unsubscribeMessageSchema,
@@ -144,6 +145,9 @@ export class SubscriptionServer {
   protected async handleMessage(connectionId: string, message: WsMessage, isSubscription: boolean) {
     let authContext: any = {};
     let context: Partial<ExtendedRequestContext> = {};
+    const startedAt = new Date();
+    // Once dispatched, the gateway method records the request's completion line itself
+    let dispatched = false;
 
     const bytes = calcMessageLength(message);
 
@@ -174,6 +178,11 @@ export class SubscriptionServer {
 
       authContext = await this.subscriptionStore.getAuthContext(connectionId);
       if (!authContext) {
+        this.recordFailure({
+          endpoint: endpointForWsMethod('method' in message ? message.method : undefined),
+          startedAt,
+          e: new CubejsHandlerError(403, 'Forbidden', 'Not authorized'),
+        });
         await this.sendMessage(
           connectionId,
           {
@@ -230,6 +239,7 @@ export class SubscriptionServer {
         collectedParams.cacheMode = collectedParams.cache;
         delete collectedParams.cache;
       }
+      dispatched = true;
       await this.apiGateway[method]({
         ...collectedParams,
         connectionId,
@@ -262,6 +272,25 @@ export class SubscriptionServer {
         res: this.resultFn(connectionId, messageId, context.requestId),
         context
       });
+      if (!dispatched) {
+        this.recordFailure({
+          context,
+          endpoint: endpointForWsMethod('method' in message ? message.method : undefined),
+          startedAt,
+          e,
+        });
+      }
+    }
+  }
+
+  /**
+   * Completion line for a message that failed before its gateway method ran. Never throws.
+   */
+  protected recordFailure(params: { context?: Partial<ExtendedRequestContext>, endpoint?: Endpoint, startedAt: Date, e: unknown }) {
+    try {
+      this.apiGateway.recordRequestFailure({ ...params, method: 'WS' });
+    } catch {
+      // logging must never break message handling
     }
   }
 

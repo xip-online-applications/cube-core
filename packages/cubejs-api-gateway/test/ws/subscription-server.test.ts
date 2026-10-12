@@ -267,6 +267,44 @@ describe('SubscriptionServer', () => {
     });
   });
 
+  describe('Completion logging', () => {
+    it('records one failure for an unauthorized method call', async () => {
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
+      mockApiGateway.recordRequestFailure = jest.fn();
+      mockSubscriptionStore.getAuthContext.mockResolvedValue(null);
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
+
+      await server.processMessage('conn-1', JSON.stringify({ method: 'load', messageId: '123', params: { query: {} } }));
+
+      expect(mockApiGateway.recordRequestFailure).toHaveBeenCalledTimes(1);
+      const [arg] = mockApiGateway.recordRequestFailure.mock.calls[0];
+      expect(arg).toMatchObject({ endpoint: 'load', method: 'WS' });
+      expect(arg.e.status).toBe(403);
+    });
+
+    it('does not record when the gateway method was dispatched', async () => {
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();
+      mockApiGateway.recordRequestFailure = jest.fn();
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
+
+      await server.processMessage('conn-1', JSON.stringify({ method: 'load', messageId: '123', params: { query: {} } }));
+
+      expect(mockApiGateway.load).toHaveBeenCalled();
+      expect(mockApiGateway.recordRequestFailure).not.toHaveBeenCalled();
+    });
+
+    it('a throwing recorder does not break the 403 response', async () => {
+      const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface, sentMessages } = createMocks();
+      mockApiGateway.recordRequestFailure = jest.fn(() => { throw new Error('boom'); });
+      mockSubscriptionStore.getAuthContext.mockResolvedValue(null);
+      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, mockSubscriptionStore, mockContextAcceptor, mockEventEmitterInterface);
+
+      await server.processMessage('conn-1', JSON.stringify({ method: 'load', messageId: '123', params: { query: {} } }));
+
+      expect(sentMessages).toContainEqual({ messageId: '123', message: { error: 'Not authorized' }, status: 403 });
+    });
+  });
+
   describe('Method Dispatch', () => {
     it('should call load method correctly', async () => {
       const { mockApiGateway, mockSubscriptionStore, mockSendMessage, mockContextAcceptor, mockEventEmitterInterface } = createMocks();

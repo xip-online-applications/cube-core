@@ -139,6 +139,10 @@ type QueryRequest = BaseRequest & {
   disableExternalPreAggregations?: boolean;
   disableLimitEnforcing?: boolean;
   cacheMode?: CacheMode;
+  /**
+   * HTTP method of the REST request, used only for the completion log line.
+   */
+  httpMethod?: string;
 };
 
 type ConvertQuery = {
