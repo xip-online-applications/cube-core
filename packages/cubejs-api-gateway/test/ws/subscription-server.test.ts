@@ -1,4 +1,9 @@
 import { SubscriptionServer } from '../../src/ws/subscription-server';
+import { LocalSubscriptionStore } from '../../src/ws/local-subscription-store';
+
+jest.mock('@cubejs-backend/tracer', () => ({
+  Tracer: { init: () => ({ get: () => ({ increment: jest.fn(), gauge: jest.fn() }) }) },
+}));
 
 const createMocks = () => {
   const sentMessages: any[] = [];
@@ -479,6 +484,88 @@ describe('SubscriptionServer', () => {
           connectionId: 'conn-1',
         })
       );
+    });
+  });
+
+  describe('WebSocket subscription logging and unsubscribe flow (real store)', () => {
+    const setup = (subscribeImpl?: (args: any) => Promise<void>) => {
+      const m = createMocks();
+      const store = new LocalSubscriptionStore();
+      m.mockApiGateway.subscribe = jest.fn(subscribeImpl || (async (args: any) => { await args.subscribe({ result: 1 }); }));
+      const server = new SubscriptionServer(m.mockApiGateway, m.mockSendMessage, store, m.mockContextAcceptor, m.mockEventEmitterInterface);
+      return { ...m, store, server };
+    };
+    const unknownEvents = (spy: jest.SpyInstance) => spy.mock.calls
+      .map(c => String(c[0]))
+      .filter(l => l.includes('cube.ws.unsubscribe_unknown'));
+    let stdout: jest.SpyInstance;
+    let logSpy: jest.SpyInstance;
+    let warnSpy: jest.SpyInstance;
+    const savedLevel = process.env.CUBEJS_LOG_LEVEL;
+
+    beforeEach(() => {
+      process.env.CUBEJS_LOG_LEVEL = 'debug';
+      stdout = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+      warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      stdout.mockRestore();
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+      if (savedLevel === undefined) delete process.env.CUBEJS_LOG_LEVEL; else process.env.CUBEJS_LOG_LEVEL = savedLevel;
+    });
+
+    // Finding (a) refuted end to end: zod coerces numeric messageId and unsubscribe id to strings
+    it('REPRO type mismatch (refuted): numeric messageId then numeric or string unsubscribe is NOT unknown', async () => {
+      const { server, store } = setup();
+      await server.processMessage('c1', JSON.stringify({ authorization: 't' }));
+      await store.setAuthContext('c1', { securityContext: { tenantId: 't1' } });
+      await server.processMessage('c1', JSON.stringify({ method: 'subscribe', messageId: 7, params: { query: {} } }));
+      expect(await store.getSubscription('c1', '7')).toBeDefined();
+
+      await server.processMessage('c1', JSON.stringify({ unsubscribe: 7 }));
+      expect(await store.getSubscription('c1', '7')).toBeUndefined();
+      expect(unknownEvents(stdout)).toHaveLength(0);
+
+      await server.processMessage('c1', JSON.stringify({ method: 'subscribe', messageId: 8, params: { query: {} } }));
+      await server.processMessage('c1', JSON.stringify({ unsubscribe: '8' }));
+      expect(unknownEvents(stdout)).toHaveLength(0);
+    });
+
+    // Finding (e): unsubscribe arrives while the first poll is still in flight; the late subscribe() resurrects it
+    it('REPRO in-flight race: unsubscribe during a pending subscribe is unknown and the subscription is then re-created', async () => {
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>(r => { release = r; });
+      const { server, store } = setup(async (args: any) => { await gate; await args.subscribe({ result: 1 }); });
+      await store.setAuthContext('c1', { securityContext: { tenantId: 't1' } });
+      await store.subscribe('c1', 'placeholder', { message: {}, state: {} }); // connection exists
+
+      const pending = server.processMessage('c1', JSON.stringify({ method: 'subscribe', messageId: 'm1', params: { query: {} } }));
+      await new Promise(r => setImmediate(r));
+      await server.processMessage('c1', JSON.stringify({ unsubscribe: 'm1' }));
+      expect(unknownEvents(stdout)).toHaveLength(1);
+
+      release();
+      await pending;
+      expect(await store.getSubscription('c1', 'm1')).toBeDefined();
+    });
+
+    it('renewCubes records the renew on the store and writes nothing via console', async () => {
+      const { server, store } = setup();
+      await store.setAuthContext('c1', { securityContext: { tenantId: 't1' } });
+      await store.subscribe('c1', 'm1', {
+        message: { method: 'subscribe', messageId: 'm1', params: { query: { measures: ['Orders.count'] } } },
+        state: {},
+      });
+      const spy = jest.spyOn(store, 'recordRenew');
+
+      await server.renewCubes([{ tenantId: 't1', cubes: ['Orders'] }]);
+
+      expect(spy).toHaveBeenCalledWith(1, 't1', ['Orders']);
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
     });
   });
 });

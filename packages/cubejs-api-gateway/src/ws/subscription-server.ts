@@ -314,13 +314,23 @@ export class SubscriptionServer {
       return;
     }
 
-    const subs = updatedValues.map(({ tenantId, cubes }) => this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes)).flat();
+    const perTenant = updatedValues.map(({ tenantId, cubes }) => ({
+      tenantId,
+      cubes,
+      subs: this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes),
+    }));
+    const subs = perTenant.map(t => t.subs).flat();
 
     if (subs.length === 0) {
       return;
     }
 
-    console.log(`Renewing ${subs.length} subscriptions`);
+    for (const { tenantId, cubes, subs: tenantSubs } of perTenant) {
+      if (tenantSubs.length > 0) {
+        // other store implementations may not expose the counter
+        this.subscriptionStore.recordRenew?.(tenantSubs.length, tenantId, cubes);
+      }
+    }
     subs.map(async subscription => {
       this.handleMessage(subscription.connectionId, subscription.message, true);
     });
