@@ -4210,12 +4210,13 @@ export class BaseQuery {
       td => td.dimension === memberPath || td.expressionPath() === memberPath
     );
 
+    // Keys are per event and cube: a second misdefined member of the same cube is counted, not listed, within the hour.
     // Deduplicated per cube (one line per hour) so a misdefined model does not flood the logs on every request.
     const dot = memberPath.indexOf('.');
     const cube = dot === -1 ? memberPath : memberPath.slice(0, dot);
 
     if (!timeDimension) {
-      emitLogRateLimited(`granularity:${cube}`, 3_600_000, 'warn', 'cube.warn.granularity_no_time_dimension', {
+      emitLogRateLimited(`granularity_no_time_dimension:${cube}`, 3_600_000, 'warn', 'cube.warn.granularity_no_time_dimension', {
         cube,
         memberPath,
         hint: `Make sure ${memberPath} is included in timeDimensions of the query`,
@@ -4229,7 +4230,7 @@ export class BaseQuery {
 
     if (!granularity) {
       // Level 'warn' (was console.error): non-fatal, falls back to the default and is rate limited.
-      emitLogRateLimited(`granularity:${cube}`, 3_600_000, 'warn', 'cube.warn.granularity_undetermined', {
+      emitLogRateLimited(`granularity_undetermined:${cube}`, 3_600_000, 'warn', 'cube.warn.granularity_undetermined', {
         cube,
         memberPath,
         hint: 'Either set a granularity or a dateRange on the time dimension',

@@ -84,8 +84,32 @@ cubes:
   it('handles member paths without a dot', async () => {
     const query = await newQuery();
     spyOutput();
-    query.convertToGranularityInSeconds('nodotpath');
-    expect(lines()[0]).toMatchObject({ cube: 'nodotpath', memberPath: 'nodotpath' });
+    expect(query.convertToGranularityInSeconds('nodotpath')).toBe(granularityToRollupSeconds());
+    const out = lines().filter(l => l.event === 'cube.warn.granularity_no_time_dimension');
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ cube: 'nodotpath', memberPath: 'nodotpath' });
+  });
+
+  it('does not let one warning type hide the other for the same cube', async () => {
+    const query: any = await newQuery();
+    query.timeDimensions = [{
+      dimension: 'shared_cube.no_granularity',
+      expressionPath: () => 'shared_cube.no_granularity',
+      granularityObj: undefined,
+      dateRangeGranularity: () => undefined,
+    }];
+    spyOutput();
+
+    query.convertToGranularityInSeconds('shared_cube.missing');
+    query.convertToGranularityInSeconds('shared_cube.no_granularity');
+    const out = lines();
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      event: 'cube.warn.granularity_no_time_dimension', cube: 'shared_cube', memberPath: 'shared_cube.missing', count: 1,
+    });
+    expect(out[1]).toMatchObject({
+      event: 'cube.warn.granularity_undetermined', cube: 'shared_cube', memberPath: 'shared_cube.no_granularity', count: 1,
+    });
   });
 
   it('emits the undetermined-granularity warning rate limited', async () => {
