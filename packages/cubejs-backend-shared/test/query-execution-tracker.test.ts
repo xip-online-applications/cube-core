@@ -1,6 +1,12 @@
-import { queryExecutionTracker } from '../src';
+import { QueryExecutionTracker } from '../src';
 
-describe('queryExecutionTracker', () => {
+describe('QueryExecutionTracker', () => {
+  let queryExecutionTracker: QueryExecutionTracker;
+
+  beforeEach(() => {
+    queryExecutionTracker = new QueryExecutionTracker();
+  });
+
   afterEach(() => {
     jest.useRealTimers();
   });
@@ -18,13 +24,29 @@ describe('queryExecutionTracker', () => {
   });
 
   it('ignores undefined id', () => {
-    queryExecutionTracker.record(undefined, { queueWaitMs: 1, execMs: 2 });
+    expect(() => queryExecutionTracker.record(undefined, { queueWaitMs: 1, execMs: 2 })).not.toThrow();
     expect(queryExecutionTracker.take('undefined')).toBeUndefined();
+    expect(queryExecutionTracker.take(undefined as any)).toBeUndefined();
+    expect((queryExecutionTracker as any).entries.size).toBe(0);
   });
 
-  it('treats span-suffixed ids as the same request', () => {
-    queryExecutionTracker.record('u1-span-1', { queueWaitMs: 1, execMs: 2 });
-    expect(queryExecutionTracker.take('u1')).toEqual({ queueWaitMs: 1, execMs: 2, executions: 1 });
+  it('keys by exact request id (span ids are separate)', () => {
+    queryExecutionTracker.record('abc-span-1', { queueWaitMs: 1, execMs: 10 });
+    queryExecutionTracker.record('abc-span-2', { queueWaitMs: 2, execMs: 20 });
+    expect(queryExecutionTracker.take('abc')).toBeUndefined();
+    expect(queryExecutionTracker.take('abc-span-1')).toEqual({ queueWaitMs: 1, execMs: 10, executions: 1 });
+    expect(queryExecutionTracker.take('abc-span-2')).toEqual({ queueWaitMs: 2, execMs: 20, executions: 1 });
+  });
+
+  it('cap drops least recently updated', () => {
+    queryExecutionTracker.record('keep', { queueWaitMs: 1, execMs: 1 });
+    for (let i = 0; i < 9999; i++) {
+      queryExecutionTracker.record(`f-${i}`, { queueWaitMs: 1, execMs: 1 });
+    }
+    queryExecutionTracker.record('keep', { queueWaitMs: 1, execMs: 1 });
+    queryExecutionTracker.record('extra', { queueWaitMs: 1, execMs: 1 });
+    expect(queryExecutionTracker.take('keep')).toEqual({ queueWaitMs: 2, execMs: 2, executions: 2 });
+    expect(queryExecutionTracker.take('f-0')).toBeUndefined();
   });
 
   it('expires entries older than 5 minutes on a later record', () => {

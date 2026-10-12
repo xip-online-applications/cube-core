@@ -1,5 +1,3 @@
-import { extractRequestUUID } from './request-id';
-
 export type QueryExecutionStats = { queueWaitMs: number; execMs: number };
 export type QueryExecutionTotals = QueryExecutionStats & { executions: number };
 
@@ -26,16 +24,20 @@ export class QueryExecutionTracker {
       if (!requestId) {
         return;
       }
-      const key = extractRequestUUID(requestId);
+      const key = requestId;
       const now = Date.now();
       this.sweep(now);
 
       const existing = this.entries.get(key);
       if (existing) {
-        existing.queueWaitMs += num(e.queueWaitMs);
-        existing.execMs += num(e.execMs);
-        existing.executions++;
-        existing.updatedAt = now;
+        // delete+set moves the key to the end so the cap drops least-recently-updated
+        this.entries.delete(key);
+        this.entries.set(key, {
+          queueWaitMs: existing.queueWaitMs + num(e.queueWaitMs),
+          execMs: existing.execMs + num(e.execMs),
+          executions: existing.executions + 1,
+          updatedAt: now,
+        });
         return;
       }
 
@@ -57,7 +59,7 @@ export class QueryExecutionTracker {
 
   public take(requestId: string): QueryExecutionTotals | undefined {
     try {
-      const key = extractRequestUUID(requestId);
+      const key = requestId;
       const entry = this.entries.get(key);
       if (!entry) {
         return undefined;

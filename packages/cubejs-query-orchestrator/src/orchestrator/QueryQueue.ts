@@ -717,7 +717,7 @@ export class QueryQueue {
     try {
       const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
       queryExecutionTracker.record(requestId, { queueWaitMs: n(timeInQueue), execMs: n(duration) });
-    } catch (e) {
+    } catch {
       // tracking must never affect query execution
     }
   }
