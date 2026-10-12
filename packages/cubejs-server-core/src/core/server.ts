@@ -222,6 +222,15 @@ export class CubejsServerCore {
     // sit outside it and forward the original params
     this.logger = getEnv('logRedaction', devMode) ? withLogRedaction(logger) : logger;
 
+    this.logger('cube.startup', {
+      level: 'info',
+      logLevel: getEnv('logLevel') ?? 'info',
+      slowQueryMs: getEnv('logSlowQueryMs'),
+      debugFullQuery: getEnv('logDebugFullQuery'),
+      version,
+      devMode,
+    });
+
     this.optsHandler = new OptsHandler(this, opts, systemOptions);
     this.options = this.optsHandler.getCoreInitializedOptions();
 

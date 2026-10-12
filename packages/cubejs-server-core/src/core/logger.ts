@@ -1,6 +1,7 @@
 import SqlString from 'sqlstring';
 import R from 'ramda';
 
+import { levelEnabled } from '@cubejs-backend/shared';
 import type { LogLevel, LoggerFn, LoggerFnParams } from '@cubejs-backend/shared';
 
 export type { LogLevel } from '@cubejs-backend/shared';
@@ -77,6 +78,7 @@ export const devLogger = (filterByLevel: LogLevel) => (type: string, { error, wa
       }
     }
     // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
+    case 'debug':
     case 'info': {
       if (!error && !warning && [
         'Executing SQL',
@@ -108,72 +110,45 @@ export const devLogger = (filterByLevel: LogLevel) => (type: string, { error, wa
   }
 };
 
-export const prodLogger = (filterByLevel: LogLevel) => (message: string, params: LoggerFnParams): void => {
-  const { error, warning } = params;
+const resolveProdLevel = ({ level, error, warning }: LoggerFnParams): LogLevel => {
+  if (level) {
+    return level;
+  }
+  if (error) {
+    return 'error';
+  }
+  if (warning) {
+    return 'warn';
+  }
+  // Legacy info-style events ('Executing SQL', 'Load Request', ...) carry no level and are noisy
+  return 'debug';
+};
 
-  if (!params.level) {
-    if (error) {
-      params.level = 'error';
-    } else if (warning) {
-      params.level = 'warn';
-    } else {
-      params.level = 'info';
-    }
+export const prodLogger = (filterByLevel: LogLevel) => (event: string, params: LoggerFnParams): void => {
+  const level = resolveProdLevel(params);
+
+  if (!levelEnabled(filterByLevel.toLowerCase() as LogLevel, level)) {
+    return;
   }
 
-  const logMessage = () => {
-    const { level, timestamp, ...restParams } = params;
+  const { level: _level, timestamp, ...restParams } = params;
 
-    console.log(JSON.stringify({
-      timestamp,
-      level,
-      message,
-      ...restParams,
-    }));
-  };
-
-  // eslint-disable-next-line default-case
-  switch (filterByLevel.toLowerCase()) {
-    case 'trace': {
-      if (!error && !warning) {
-        logMessage();
-        break;
-      }
-    }
-    // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
-    case 'info':
-      if ([
-        'REST API Request',
-      ].includes(message)) {
-        logMessage();
-        break;
-      }
-    // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
-    case 'warn': {
-      if (!error && warning) {
-        logMessage();
-        break;
-      }
-    }
-    // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
-    case 'error': {
-      if (error) {
-        logMessage();
-        break;
-      }
-    }
-  }
+  process.stdout.write(`${JSON.stringify({
+    ts: timestamp ?? new Date().toISOString(),
+    level,
+    event,
+    pod: process.env.HOSTNAME ?? null,
+    ...restParams,
+  })}\n`);
 };
 
 export const createLogger = (production: boolean, filterByLevel: LogLevel = 'info'): LoggerFn => {
   switch (filterByLevel.toLowerCase()) {
     case 'trace':
+    case 'debug':
     case 'info':
     case 'warn':
     case 'error':
-      break;
-    // not used, but let's allow
-    case 'debug':
       break;
     default:
       throw new Error(`Invalid log level: ${filterByLevel}`);
