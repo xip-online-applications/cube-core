@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { getEnv, getProcessUid, LoggerFn, extractRequestUUID } from '@cubejs-backend/shared';
+import { getEnv, getProcessUid, LoggerFn, extractRequestUUID, queryExecutionTracker } from '@cubejs-backend/shared';
 import {
   QueueDriverInterface,
   QueryKey,
@@ -713,6 +713,15 @@ export class QueryQueue {
     return undefined;
   }
 
+  private recordExecution(requestId: string | undefined, timeInQueue: unknown, duration: unknown) {
+    try {
+      const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      queryExecutionTracker.record(requestId, { queueWaitMs: n(timeInQueue), execMs: n(duration) });
+    } catch (e) {
+      // tracking must never affect query execution
+    }
+  }
+
   /**
    * Execute query without adding it to the queue.
    */
@@ -750,6 +759,7 @@ export class QueryQueue {
         requestId: query.requestId,
         timeInQueue: 0
       });
+      this.recordExecution(query.requestId, 0, (new Date()).getTime() - startQueryTime);
     } catch (e: any) {
       executionResult = {
         error: (e.message || e).toString() // TODO error handling
@@ -1030,6 +1040,7 @@ export class QueryQueue {
           preAggregation: query.query?.preAggregation,
           addedToQueueTime: query.addedToQueueTime,
         });
+        this.recordExecution(query.requestId, timeInQueue, duration);
       } catch (e: any) {
         executionResult = {
           error: (e.message || e).toString() // TODO error handling
