@@ -19,28 +19,72 @@ export type QueryStats = {
   offset?: number;
 };
 
+const MEMBER_RE = /^[A-Za-z_]\w*(\.\w+)+$/;
+const GRANULARITY_RE = /^\w{1,64}$/;
+const MAX_CUBES = 50;
+
+// Mirrors the filter operators accepted by the API gateway (see `operators` in query.ts).
+const FILTER_OPERATORS = new Set([
+  'equals', 'notEquals', 'contains', 'notContains', 'startsWith', 'iStartsWith', 'notStartsWith',
+  'endsWith', 'notEndsWith', 'in', 'notIn', 'gt', 'gte', 'lt', 'lte', 'set', 'notSet',
+  'inDateRange', 'notInDateRange', 'onTheDate', 'beforeDate', 'beforeOrOnDate', 'afterDate',
+  'afterOrOnDate', 'measureFilter',
+]);
+
 const isObj = (v: unknown): v is Record<string, any> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+const validMember = (v: unknown): v is string => typeof v === 'string' && MEMBER_RE.test(v);
+
+const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter(validMember) : []);
 
 const objArr = (v: unknown): Record<string, any>[] => (Array.isArray(v) ? v.filter(isObj) : []);
+
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+const memberOrMarker = (v: unknown): string => (validMember(v) ? v : '?');
+
+const operatorOrMarker = (v: unknown): string => (typeof v === 'string' && FILTER_OPERATORS.has(v) ? v : '?');
 
 function normalizeFilter(filter: unknown, depth: number): unknown {
   if (!isObj(filter) || depth > MAX_DEPTH) {
     return null;
   }
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(filter).sort()) {
-    if (key === 'values') {
-      out.values = [];
-    } else if (key === 'and' || key === 'or') {
-      const children = filter[key];
-      out[key] = Array.isArray(children) ? children.map((c) => normalizeFilter(c, depth + 1)) : [];
-    } else if (key === 'member' || key === 'dimension' || key === 'measure' || key === 'operator') {
-      out[key] = typeof filter[key] === 'string' ? filter[key] : null;
+  if ('values' in filter) {
+    out.values = [];
+  }
+  for (const key of ['and', 'or']) {
+    if (key in filter) {
+      out[key] = Array.isArray(filter[key]) ? filter[key].map((c: unknown) => normalizeFilter(c, depth + 1)) : [];
     }
   }
+  for (const key of ['dimension', 'member', 'measure']) {
+    if (key in filter) {
+      out[key] = memberOrMarker(filter[key]);
+    }
+  }
+  if ('operator' in filter) {
+    out.operator = operatorOrMarker(filter.operator);
+  }
   return out;
+}
+
+function normalizeOrder(order: unknown): unknown {
+  const dir = (d: unknown) => (d === 'asc' || d === 'desc' ? d : '?');
+  const pairs: [string, string][] = [];
+  if (Array.isArray(order)) {
+    for (const p of order) {
+      if (Array.isArray(p)) {
+        pairs.push([memberOrMarker(p[0]), dir(p[1])]);
+      }
+    }
+  } else if (isObj(order)) {
+    for (const k of Object.keys(order)) {
+      pairs.push([memberOrMarker(k), dir(order[k])]);
+    }
+  }
+  // Order is significant; object and pairs forms normalise to the same shape.
+  return pairs;
 }
 
 function normalizeSingle(query: unknown): unknown {
@@ -48,47 +92,65 @@ function normalizeSingle(query: unknown): unknown {
     return null;
   }
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(query).sort()) {
-    const value = query[key];
-    if (key === 'filters') {
-      out.filters = Array.isArray(value) ? value.map((f) => normalizeFilter(f, 0)) : [];
-    } else if (key === 'timeDimensions') {
-      out.timeDimensions = Array.isArray(value)
-        ? value.map((td) => {
-          if (!isObj(td)) {
-            return null;
-          }
-          const t: Record<string, unknown> = {};
-          for (const k of Object.keys(td).sort()) {
-            t[k] = k === 'dateRange' ? RANGE_MARKER : td[k];
-          }
-          return t;
-        })
-        : [];
-    } else {
-      out[key] = value;
+  for (const key of ['dimensions', 'measures', 'segments']) {
+    if (key in query) {
+      out[key] = Array.isArray(query[key]) ? query[key].map(memberOrMarker) : [];
     }
   }
-  return out;
+  if ('filters' in query) {
+    // Filter array order is significant and preserved.
+    out.filters = Array.isArray(query.filters) ? query.filters.map((f) => normalizeFilter(f, 0)) : [];
+  }
+  if ('timeDimensions' in query) {
+    out.timeDimensions = Array.isArray(query.timeDimensions)
+      ? query.timeDimensions.map((td) => {
+        if (!isObj(td)) {
+          return null;
+        }
+        const t: Record<string, unknown> = {};
+        if ('compareDateRange' in td) t.compareDateRange = RANGE_MARKER;
+        if ('dateRange' in td) t.dateRange = RANGE_MARKER;
+        if ('dimension' in td) t.dimension = memberOrMarker(td.dimension);
+        if ('granularity' in td) {
+          t.granularity = typeof td.granularity === 'string' && GRANULARITY_RE.test(td.granularity) ? td.granularity : '?';
+        }
+        return t;
+      })
+      : [];
+  }
+  if ('order' in query) out.order = normalizeOrder(query.order);
+  if (finite(query.limit)) out.limit = query.limit;
+  if (finite(query.offset)) out.offset = query.offset;
+  for (const key of ['ungrouped', 'total', 'renewQuery']) {
+    if (typeof query[key] === 'boolean') out[key] = query[key];
+  }
+  // Presence markers only; the values are never logged.
+  if ('queryType' in query) out.queryType = true;
+  if ('timezone' in query) out.timezone = true;
+  return Object.fromEntries(Object.keys(out).sort().map((k) => [k, out[k]]));
+}
+
+function normalizeUnsafe(query: unknown): unknown {
+  return Array.isArray(query) ? query.map(normalizeSingle) : normalizeSingle(query);
 }
 
 export function normalizeQuery(query: unknown): unknown {
   try {
-    if (Array.isArray(query)) {
-      return query.map(normalizeSingle);
-    }
-    return normalizeSingle(query);
+    return normalizeUnsafe(query);
   } catch (e) {
     return null;
   }
 }
 
 export function queryHash(query: unknown): string {
-  let json: string;
+  let json: string | undefined;
   try {
-    json = JSON.stringify(normalizeQuery(query)) ?? 'null';
+    json = JSON.stringify(normalizeUnsafe(query));
   } catch (e) {
-    json = 'null';
+    json = undefined;
+  }
+  if (json === undefined) {
+    return 'unhashable00';
   }
   return crypto.createHash('sha1').update(json).digest('hex').slice(0, 12);
 }
@@ -112,12 +174,12 @@ function* walkFilters(filters: unknown, depth = 0): Generator<Record<string, any
 
 const filterMember = (f: Record<string, any>): string | undefined => {
   const m = f.member ?? f.dimension ?? f.measure;
-  return typeof m === 'string' ? m : undefined;
+  return validMember(m) ? m : undefined;
 };
 
 function orderKeys(order: unknown): string[] {
   if (Array.isArray(order)) {
-    return order.map((p) => (Array.isArray(p) ? p[0] : undefined)).filter((x): x is string => typeof x === 'string');
+    return order.map((p) => (Array.isArray(p) ? p[0] : undefined)).filter(validMember);
   }
   return isObj(order) ? Object.keys(order) : [];
 }
@@ -141,17 +203,17 @@ export function summarizeQuery(query: unknown, maxLen: number = 500): string {
       for (const f of walkFilters(q.filters)) {
         const member = filterMember(f);
         if (member) {
-          tokens.push(`f:${member}(${typeof f.operator === 'string' ? f.operator : '?'})`);
+          tokens.push(`f:${member}(${operatorOrMarker(f.operator)})`);
         }
       }
       for (const td of objArr(q.timeDimensions)) {
-        if (typeof td.dimension === 'string') {
-          tokens.push(`td:${td.dimension}${typeof td.granularity === 'string' ? `/${td.granularity}` : ''}`);
+        if (validMember(td.dimension)) {
+          tokens.push(`td:${td.dimension}${typeof td.granularity === 'string' && GRANULARITY_RE.test(td.granularity) ? `/${td.granularity}` : ''}`);
         }
       }
       strArr(q.segments).forEach((s) => tokens.push(`s:${s}`));
-      if (typeof q.limit === 'number') tokens.push(`limit=${q.limit}`);
-      if (typeof q.offset === 'number') tokens.push(`offset=${q.offset}`);
+      if (finite(q.limit)) tokens.push(`limit=${q.limit}`);
+      if (finite(q.offset)) tokens.push(`offset=${q.offset}`);
       if (q.ungrouped === true) tokens.push('ungrouped');
       parts.push(tokens.join(' '));
     }
@@ -177,7 +239,7 @@ export function queryStats(query: unknown): QueryStats {
   try {
     const cubes = new Set<string>();
     const add = (member: unknown) => {
-      if (typeof member === 'string') {
+      if (validMember(member)) {
         const c = cubeOf(member);
         if (c) cubes.add(c);
       }
@@ -203,10 +265,10 @@ export function queryStats(query: unknown): QueryStats {
       stats.dimensionCount += dimensions.length;
       stats.hasTimeDimension = stats.hasTimeDimension || tds.length > 0;
       stats.ungrouped = stats.ungrouped || q.ungrouped === true;
-      if (typeof q.limit === 'number') stats.limit = Math.max(stats.limit ?? 0, q.limit);
-      if (typeof q.offset === 'number') stats.offset = Math.max(stats.offset ?? 0, q.offset);
+      if (finite(q.limit)) stats.limit = Math.max(stats.limit ?? q.limit, q.limit);
+      if (finite(q.offset)) stats.offset = Math.max(stats.offset ?? q.offset, q.offset);
     }
-    stats.cubes = [...cubes].sort();
+    stats.cubes = [...cubes].sort().slice(0, MAX_CUBES);
   } catch (e) {
     // total: return whatever was collected
   }
