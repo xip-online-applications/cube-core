@@ -1,7 +1,7 @@
 import SqlString from 'sqlstring';
 import R from 'ramda';
 
-import { levelEnabled } from '@cubejs-backend/shared';
+import { getEnv, levelEnabled } from '@cubejs-backend/shared';
 import type { LogLevel, LoggerFn, LoggerFnParams } from '@cubejs-backend/shared';
 
 export type { LogLevel } from '@cubejs-backend/shared';
@@ -131,15 +131,66 @@ export const prodLogger = (filterByLevel: LogLevel) => (event: string, params: L
     return;
   }
 
-  const { level: _level, timestamp, ...restParams } = params;
+  const {
+    level: _level, timestamp, message: _message, event: _event, pod: _pod, ts: _ts, ...restParams
+  } = params as LoggerFnParams & Record<string, unknown>;
 
-  process.stdout.write(`${JSON.stringify({
+  const line = {
+    ...restParams,
     ts: timestamp ?? new Date().toISOString(),
     level,
     event,
     pod: process.env.HOSTNAME ?? null,
-    ...restParams,
-  })}\n`);
+  };
+
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(line, safeReplacer());
+  } catch (e) {
+    serialized = JSON.stringify({
+      ts: line.ts, level, event, pod: line.pod, serializationError: true,
+    });
+  }
+
+  process.stdout.write(`${serialized}\n`);
+};
+
+const STACK_LIMIT = 2000;
+
+// Handles BigInt, Error and circular references; a fresh replacer per call as it keeps state
+const safeReplacer = () => {
+  const ancestors: unknown[] = [];
+  return function replacer(this: unknown, _key: string, value: unknown): unknown {
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    let v = value;
+    if (v instanceof Error) {
+      v = { name: v.name, message: v.message, stack: v.stack?.slice(0, STACK_LIMIT) };
+    }
+    if (typeof v === 'object' && v !== null) {
+      // `this` is the holder of the current key; drop ancestors that are not on the current path
+      while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) {
+        ancestors.pop();
+      }
+      if (ancestors.includes(value)) {
+        return '[Circular]';
+      }
+      ancestors.push(v);
+    }
+    return v;
+  };
+};
+
+export const logStartup = (logger: LoggerFn, { version, devMode }: { version: string, devMode: boolean }): void => {
+  logger('cube.startup', {
+    level: 'info',
+    logLevel: getEnv('logLevel') ?? 'info', // getEnv('logLevel') has no default
+    slowQueryMs: getEnv('logSlowQueryMs'),
+    debugFullQuery: getEnv('logDebugFullQuery'),
+    version,
+    devMode,
+  });
 };
 
 export const createLogger = (production: boolean, filterByLevel: LogLevel = 'info'): LoggerFn => {

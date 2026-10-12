@@ -1,5 +1,5 @@
 import { withLogRedaction } from '@cubejs-backend/shared';
-import { createLogger, prodLogger } from '../../src/core/logger';
+import { createLogger, logStartup, prodLogger } from '../../src/core/logger';
 
 describe('prodLogger', () => {
   let writes: string[];
@@ -73,9 +73,77 @@ describe('prodLogger', () => {
     logger('b', { level: 'info' });
     logger('c', { warning: 'w' });
     logger('d', { error: new Error('x') });
-    for (const line of lines()) {
+    const out = lines();
+    // error always passes every threshold
+    expect(out.length).toBeGreaterThanOrEqual(1);
+    expect(out.map((l) => JSON.parse(l).event)).toContain('d');
+    if (level !== 'error') {
+      expect(out.map((l) => JSON.parse(l).event)).toContain('c');
+    }
+    for (const line of out) {
       expect(() => JSON.parse(line)).not.toThrow();
     }
+  });
+
+  test('warn and error are emitted at trace', () => {
+    prodLogger('trace')('w', { warning: 'w' });
+    prodLogger('trace')('e', { error: 'e' });
+    expect(lines()).toHaveLength(2);
+  });
+
+  test('pod follows HOSTNAME, null when unset', () => {
+    const prev = process.env.HOSTNAME;
+    try {
+      process.env.HOSTNAME = 'pod-1';
+      prodLogger('info')('x', { level: 'info' });
+      delete process.env.HOSTNAME;
+      prodLogger('info')('y', { level: 'info' });
+      const parsed = lines().map((l) => JSON.parse(l));
+      expect(parsed[0].pod).toBe('pod-1');
+      expect(parsed[1].pod).toBeNull();
+    } finally {
+      if (prev === undefined) delete process.env.HOSTNAME; else process.env.HOSTNAME = prev;
+    }
+  });
+
+  test('schema fields win over caller params and message is dropped', () => {
+    prodLogger('info')('real', { level: 'info', event: 'x', pod: 'evil', ts: '1', message: 'm' } as any);
+    const parsed = JSON.parse(lines()[0]);
+    expect(parsed.event).toBe('real');
+    expect(parsed.pod).not.toBe('evil');
+    expect(parsed.ts).not.toBe('1');
+    expect('message' in parsed).toBe(false);
+  });
+
+  test('never throws on circular, BigInt and Error', () => {
+    const circ: any = { a: 1 };
+    circ.self = circ;
+    const logger = prodLogger('info');
+    expect(() => logger('c', { level: 'info', circ } as any)).not.toThrow();
+    expect(() => logger('b', { level: 'info', big: BigInt(5) } as any)).not.toThrow();
+    expect(() => logger('e', { error: new Error('boom') })).not.toThrow();
+    const out = lines();
+    expect(out).toHaveLength(3);
+    const parsed = out.map((l) => JSON.parse(l));
+    expect(parsed[0].circ.self).toBe('[Circular]');
+    expect(parsed[1].big).toBe('5');
+    expect(parsed[2].error.message).toBe('boom');
+    expect(parsed[2].error.name).toBe('Error');
+  });
+
+  test('falls back to a minimal line on residual failure', () => {
+    const bad = { toJSON() { throw new Error('nope'); } };
+    prodLogger('info')('z', { level: 'info', bad } as any);
+    const parsed = JSON.parse(lines()[0]);
+    expect(parsed).toMatchObject({ event: 'z', level: 'info', serializationError: true });
+  });
+
+  test('logStartup emits cube.startup once', () => {
+    const fn = jest.fn();
+    logStartup(fn, { version: '1.0.0', devMode: false });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn.mock.calls[0][0]).toBe('cube.startup');
+    expect(fn.mock.calls[0][1]).toMatchObject({ level: 'info', version: '1.0.0', devMode: false });
   });
 
   test('withLogRedaction passes level/event/ts/pod fields through', () => {

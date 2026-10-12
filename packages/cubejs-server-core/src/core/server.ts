@@ -45,7 +45,7 @@ import { CompilerApi, type CompilerApiOptions } from './CompilerApi';
 import { DevServer } from './DevServer';
 import { agentCollect } from './agentCollect';
 import { OrchestratorStorage } from './OrchestratorStorage';
-import { createLogger } from './logger';
+import { createLogger, logStartup } from './logger';
 import { OptsHandler } from './OptsHandler';
 import {
   driverDependencies,
@@ -222,14 +222,9 @@ export class CubejsServerCore {
     // sit outside it and forward the original params
     this.logger = getEnv('logRedaction', devMode) ? withLogRedaction(logger) : logger;
 
-    this.logger('cube.startup', {
-      level: 'info',
-      logLevel: getEnv('logLevel') ?? 'info',
-      slowQueryMs: getEnv('logSlowQueryMs'),
-      debugFullQuery: getEnv('logDebugFullQuery'),
-      version,
-      devMode,
-    });
+    if (!opts.logger) {
+      logStartup(this.logger, { version, devMode });
+    }
 
     this.optsHandler = new OptsHandler(this, opts, systemOptions);
     this.options = this.optsHandler.getCoreInitializedOptions();
