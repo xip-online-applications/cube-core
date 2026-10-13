@@ -168,6 +168,95 @@ describe('prodLogger', () => {
     expect(fn.mock.calls[0][1]).toMatchObject({ level: 'info', version: '1.0.0', devMode: false });
   });
 
+  test('logStartup reports an unknown LOG_LEVEL and never throws on invalid settings', () => {
+    const saved = { ...process.env };
+    try {
+      process.env.LOG_LEVEL = 'verbose';
+      process.env.LOG_SLOW_QUERY_MS = '1s';
+      process.env.LOG_DEBUG_FULL_QUERY = 'abc';
+      const fn = jest.fn();
+      expect(() => logStartup(fn, { version: '1.0.0', devMode: false })).not.toThrow();
+      expect(fn.mock.calls[0][1]).toMatchObject({
+        logLevel: 'info', logLevelInvalid: 'verbose', slowQueryMs: 1000, debugFullQuery: false,
+      });
+      process.env.LOG_LEVEL = 'DEBUG';
+      logStartup(fn, { version: '1.0.0', devMode: false });
+      expect(fn.mock.calls[1][1].logLevel).toBe('debug');
+      expect('logLevelInvalid' in fn.mock.calls[1][1]).toBe(false);
+    } finally {
+      for (const k of Object.keys(process.env)) {
+        if (!(k in saved)) delete process.env[k];
+      }
+      Object.assign(process.env, saved);
+    }
+  });
+
+  test.each(['DEBUG', ' debug ', 'Debug'])('a %j threshold behaves like debug', (raw) => {
+    prodLogger(raw as any)('Executing SQL', {});
+    expect(lines()).toHaveLength(1);
+  });
+
+  test.each(['', 'verbose', 'WARNING'])('an unknown threshold %j behaves like info', (raw) => {
+    prodLogger(raw as any)('Executing SQL', {});
+    prodLogger(raw as any)('x', { level: 'info' });
+    expect(lines().map((l) => JSON.parse(l).event)).toEqual(['x']);
+  });
+
+  describe('securityContext at the default level', () => {
+    const securityContext = { tenantId: 't-1', apiKey: 'sk-live-SECRETKEY', userEmail: 'a@b.c' };
+    const query = { measures: ['orders.count'], filters: [{ member: 'orders.email', operator: 'equals', values: ['victim@example.com'] }] };
+    // The shapes ApiGateway.handleError and checkAuthWrapper pass to the logger option
+    const detailed = () => ({
+      level: 'debug' as const,
+      query,
+      error: 'column "victim@example.com" does not exist',
+      duration: 12,
+      securityContext,
+      requestId: 'req-1',
+    });
+
+    test.each(['info', 'warn', 'error'] as const)('at %s, detailed handleError events print nothing', (threshold) => {
+      const logger = prodLogger(threshold);
+      logger('Orchestrator error', detailed());
+      logger('Internal Server Error', detailed());
+      logger('User Error', detailed());
+      logger('Slow Query Warning', { level: 'debug', query, warning: 'slow', securityContext });
+      expect(writes.join('')).toBe('');
+    });
+
+    test.each(['info', 'warn', 'error'] as const)('at %s, a securityContext is flattened to tenantId', (threshold) => {
+      const logger = prodLogger(threshold);
+      logger('Forbidden', { error: 'Invalid token', securityContext, requestId: 'req-1' });
+      logger('Something', { error: 'x', securityContext: { apiKey: 'sk-live-SECRETKEY' } });
+      logger('Other', { error: 'x', securityContext: undefined });
+      const out = writes.join('');
+      expect(out).not.toContain('SECRETKEY');
+      expect(out).not.toContain('apiKey');
+      expect(out).not.toContain('a@b.c');
+      expect(out).not.toContain('securityContext');
+      const parsed = lines().map((l) => JSON.parse(l));
+      expect(parsed[0]).toMatchObject({ event: 'Forbidden', tenantId: 't-1', requestId: 'req-1' });
+      expect(parsed[1].tenantId).toBe('unknown');
+      expect('tenantId' in parsed[2]).toBe(false);
+    });
+
+    test('the caller params are not mutated', () => {
+      const params = { error: 'x', securityContext };
+      prodLogger('info')('e', params);
+      expect(params.securityContext).toBe(securityContext);
+    });
+
+    test.each(['debug', 'trace'] as const)('at %s, the detail including the full securityContext is printed', (threshold) => {
+      const logger = prodLogger(threshold);
+      logger('Orchestrator error', detailed());
+      logger('Slow Query Warning', { level: 'debug', query, warning: 'slow', securityContext });
+      const parsed = lines().map((l) => JSON.parse(l));
+      expect(parsed).toHaveLength(2);
+      expect(parsed[0]).toMatchObject({ event: 'Orchestrator error', level: 'debug', securityContext, query });
+      expect(parsed[1]).toMatchObject({ event: 'Slow Query Warning', level: 'debug', securityContext });
+    });
+  });
+
   test('withLogRedaction passes level/event/ts/pod fields through', () => {
     const logger = withLogRedaction(prodLogger('info'));
     logger('cube.startup', { level: 'info', logLevel: 'info', slowQueryMs: 1000, devMode: false });
@@ -183,8 +272,21 @@ describe('createLogger', () => {
     expect(() => createLogger(false, level)).not.toThrow();
   });
 
-  test('defaults to info and rejects invalid', () => {
+  test('defaults to info and degrades an unknown level to info instead of throwing', () => {
     expect(() => createLogger(true)).not.toThrow();
-    expect(() => createLogger(true, 'nope' as any)).toThrow(/Invalid log level/);
+    expect(() => createLogger(true, 'nope' as any)).not.toThrow();
+    expect(() => createLogger(false, 'nope' as any)).not.toThrow();
+    expect(() => createLogger(true, undefined)).not.toThrow();
+  });
+
+  test('an upper-case level behaves like the lower-case one', () => {
+    const spy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      createLogger(true, 'DEBUG' as any)('Executing SQL', {});
+      createLogger(true, 'nope' as any)('Executing SQL', {});
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

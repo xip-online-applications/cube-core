@@ -162,66 +162,119 @@ const safeReplacer = () => {
   };
 };
 
-export const prodLogger = (filterByLevel: LogLevel) => (event: string, params: LoggerFnParams): void => {
-  // Logging must never break a request: nothing below is allowed to throw
+const LOG_LEVELS: readonly LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'];
+const MAX_TENANT_ID = 128;
+
+/**
+ * A configured threshold, trimmed and lower-cased; anything unknown (blank, a typo) is 'info'.
+ * The env getter normalises the same way, so LOG_LEVEL=DEBUG and debug behave alike everywhere.
+ */
+export const normalizeLogLevel = (value: unknown): LogLevel => {
+  const level = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return (LOG_LEVELS as readonly string[]).includes(level) ? level as LogLevel : 'info';
+};
+
+const tenantIdOf = (securityContext: unknown): string => {
   try {
-    const level = resolveProdLevel(params);
-
-    if (!levelEnabled(filterByLevel.toLowerCase() as LogLevel, level)) {
-      return;
+    const tenantId = (securityContext as Record<string, unknown> | null | undefined)?.tenantId;
+    if (typeof tenantId === 'string' && tenantId) {
+      return tenantId.slice(0, MAX_TENANT_ID);
     }
-
-    const {
-      level: _level, timestamp, message: _message, event: _event, pod: _pod, ts: _ts, ...restParams
-    } = params as LoggerFnParams & Record<string, unknown>;
-
-    const ts = timestamp === undefined ? new Date().toISOString() : safeString(timestamp);
-    const eventName = safeString(event);
-    const pod = process.env.HOSTNAME ?? null;
-
-    let serialized: string;
-    try {
-      serialized = JSON.stringify({
-        ...restParams, ts, level, event: eventName, pod,
-      }, safeReplacer());
-    } catch (e) {
-      serialized = JSON.stringify({
-        ts, level, event: eventName, pod, serializationError: true,
-      });
+    if (typeof tenantId === 'number' && Number.isFinite(tenantId)) {
+      return String(tenantId);
     }
-
-    process.stdout.write(`${serialized}\n`);
   } catch (e) {
-    // swallow
+    // a hostile getter: fall through
+  }
+  return 'unknown';
+};
+
+const writeProdLine = (event: string, params: LoggerFnParams, level: LogLevel, fullSecurityContext: boolean): void => {
+  const {
+    level: _level, timestamp, message: _message, event: _event, pod: _pod, ts: _ts, ...params0
+  } = params as LoggerFnParams & Record<string, unknown>;
+
+  let restParams: Record<string, unknown> = params0;
+  if (!fullSecurityContext && 'securityContext' in restParams) {
+    const { securityContext, ...withoutSecurityContext } = restParams;
+    restParams = securityContext === undefined || securityContext === null
+      ? withoutSecurityContext
+      : { ...withoutSecurityContext, tenantId: tenantIdOf(securityContext) };
+  }
+
+  const ts = timestamp === undefined ? new Date().toISOString() : safeString(timestamp);
+  const eventName = safeString(event);
+  const pod = process.env.HOSTNAME ?? null;
+
+  let serialized: string;
+  try {
+    serialized = JSON.stringify({
+      ...restParams, ts, level, event: eventName, pod,
+    }, safeReplacer());
+  } catch (e) {
+    serialized = JSON.stringify({
+      ts, level, event: eventName, pod, serializationError: true,
+    });
+  }
+
+  process.stdout.write(`${serialized}\n`);
+};
+
+export const prodLogger = (filterByLevel: LogLevel) => {
+  const threshold = normalizeLogLevel(filterByLevel);
+  // The securityContext may hold anything an auth hook put there (keys, emails, claims): below
+  // debug only its tenantId is written. Applied here, in the stdout sink, so the agent and
+  // telemetry wrappers around the logger still receive the original params
+  const fullSecurityContext = levelEnabled(threshold, 'debug');
+
+  return (event: string, params: LoggerFnParams): void => {
+    // Logging must never break a request: nothing below is allowed to throw
+    try {
+      const level = resolveProdLevel(params);
+
+      if (!levelEnabled(threshold, level)) {
+        return;
+      }
+
+      writeProdLine(event, params, level, fullSecurityContext);
+    } catch (e) {
+      // swallow
+    }
+  };
+};
+
+const safeEnv = <T>(read: () => T, fallback: T): T => {
+  try {
+    return read();
+  } catch (e) {
+    return fallback;
   }
 };
 
 export const logStartup = (logger: LoggerFn, { version, devMode }: { version: string, devMode: boolean }): void => {
+  const logLevelInvalid = safeEnv<string | undefined>(() => getEnv('logLevelInvalid'), undefined);
   logger('cube.startup', {
     level: 'info',
-    logLevel: getEnv('logLevel') ?? 'info', // getEnv('logLevel') has no default
-    slowQueryMs: getEnv('logSlowQueryMs'),
-    debugFullQuery: getEnv('logDebugFullQuery'),
+    logLevel: safeEnv(() => getEnv('logLevel'), undefined) ?? 'info', // getEnv('logLevel') has no default
+    // An unknown LOG_LEVEL (as set, truncated): the server runs at info instead
+    ...(logLevelInvalid ? { logLevelInvalid } : {}),
+    slowQueryMs: safeEnv(() => getEnv('logSlowQueryMs'), 1000),
+    debugFullQuery: safeEnv(() => getEnv('logDebugFullQuery'), false),
     version,
     devMode,
   });
 };
 
+/**
+ * An unknown level (a typo in LOG_LEVEL/CUBEJS_LOG_LEVEL) degrades to info instead of
+ * stopping the server; cube.startup reports it as `logLevelInvalid`.
+ */
 export const createLogger = (production: boolean, filterByLevel: LogLevel = 'info'): LoggerFn => {
-  switch (filterByLevel.toLowerCase()) {
-    case 'trace':
-    case 'debug':
-    case 'info':
-    case 'warn':
-    case 'error':
-      break;
-    default:
-      throw new Error(`Invalid log level: ${filterByLevel}`);
-  }
+  const level = normalizeLogLevel(filterByLevel);
 
   if (production) {
-    return prodLogger(filterByLevel);
+    return prodLogger(level);
   } else {
-    return devLogger(filterByLevel);
+    return devLogger(level);
   }
 };
