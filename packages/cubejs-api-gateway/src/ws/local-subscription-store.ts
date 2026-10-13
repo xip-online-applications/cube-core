@@ -57,14 +57,24 @@ export class LocalSubscriptionStore {
 
   private renewCount = 0;
 
+  private readonly summaryTimer: NodeJS.Timeout;
+
   public constructor(options: LocalSubscriptionStoreOptions = {}) {
     Tracer.init();
     this.heartBeatInterval = options.heartBeatInterval || 60;
 
-    const timer = setInterval(() => {
+    this.summaryTimer = setInterval(() => {
       this.logConnections();
     }, 60 * 1000);
-    timer.unref();
+    this.summaryTimer.unref();
+  }
+
+  /**
+   * Stops the periodic subscription summary. Optional: the timer is unref'd, so it never keeps
+   * the process alive; this is for owners (and tests) that discard the store.
+   */
+  public close() {
+    clearInterval(this.summaryTimer);
   }
 
   /**
@@ -202,7 +212,22 @@ export class LocalSubscriptionStore {
     this.connections.clear();
   }
 
+  /**
+   * The 60 s interval callback. Never throws: an exception here would be uncaught.
+   */
   private logConnections() {
+    try {
+      this.logConnectionsUnsafe();
+    } catch {
+      // metrics and logging must never crash the process
+    } finally {
+      this.unsubscribeUnknownCount = 0;
+      this.refreshCount = 0;
+      this.renewCount = 0;
+    }
+  }
+
+  private logConnectionsUnsafe() {
     const subsPerTenant = getNumberOfSubscriptionsPerTenant(this.connections);
     const tenants = Object.keys(subsPerTenant);
 
@@ -222,8 +247,5 @@ export class LocalSubscriptionStore {
         renews: this.renewCount,
       });
     }
-    this.unsubscribeUnknownCount = 0;
-    this.refreshCount = 0;
-    this.renewCount = 0;
   }
 }

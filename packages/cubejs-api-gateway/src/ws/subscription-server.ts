@@ -71,9 +71,19 @@ export class SubscriptionServer {
     protected readonly eventEmitter: EventEmitterInterface
   ) {
     this.eventEmitter.on('cubeRenewed', (val: unknown) => this.#cubeRenewSubject.next(val));
-    this.#cubeRenewedPipe.subscribe(this.renewCubes.bind(this));
+    this.#cubeRenewedSubscription = this.#cubeRenewedPipe.subscribe(this.renewCubes.bind(this));
   }
 
+  readonly #cubeRenewedSubscription: { unsubscribe(): void };
+
+  /**
+   * Stops the renew pipeline (its bufferTime keeps a timer running). Optional: for owners and
+   * tests that discard the server.
+   */
+  public close() {
+    this.#cubeRenewedSubscription.unsubscribe();
+    this.#cubeRenewSubject.complete();
+  }
 
   protected resultFn(connectionId: string, messageId: string | undefined, requestId: string | undefined, logNetworkUsage: boolean = true) {
     return async (message, { status } = { status: 200 }) => {

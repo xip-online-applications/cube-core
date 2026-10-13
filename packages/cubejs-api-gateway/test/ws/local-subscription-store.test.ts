@@ -332,6 +332,31 @@ describe('LocalSubscriptionStore logging', () => {
     expect(lines().filter(l => l.event === 'cube.ws.summary')).toHaveLength(0);
   });
 
+  it('close stops the summary interval', async () => {
+    const store = new LocalSubscriptionStore();
+    await store.setAuthContext('conn-1', { securityContext: { tenantId: 't1' } });
+    await store.subscribe('conn-1', 'a', { message: {}, state: {} });
+    store.close();
+    jest.advanceTimersByTime(120 * 1000);
+    expect(lines().filter(l => l.event === 'cube.ws.summary')).toHaveLength(0);
+  });
+
+  it('the summary interval never throws, even with a throwing tracer, and still resets counters', async () => {
+    const store = new LocalSubscriptionStore();
+    await store.setAuthContext('conn-1', { securityContext: { tenantId: 't1' } });
+    await store.subscribe('conn-1', 'a', { message: {}, state: {} });
+    store.recordRenew(1);
+    mockTracerInit = jest.fn(() => { throw new Error('boom'); });
+
+    expect(() => jest.advanceTimersByTime(60 * 1000)).not.toThrow();
+
+    mockTracerInit = jest.fn(() => ({ get: () => mockStatsd }));
+    jest.advanceTimersByTime(60 * 1000);
+    const summaries = lines().filter(l => l.event === 'cube.ws.summary');
+    expect(summaries[summaries.length - 1]).toMatchObject({ renews: 0 });
+    store.close();
+  });
+
   it('unrefs its interval', () => {
     const spy = jest.spyOn(global, 'setInterval');
     // eslint-disable-next-line no-new
