@@ -447,6 +447,19 @@ describe('QueryCompletionLogger', () => {
     expect(() => new QueryCompletionLogger()).not.toThrow();
   });
 
+  test('resolveQuery runs only when a line is written, and its result is used', () => {
+    process.env.LOG_LEVEL = 'info';
+    const resolveQuery = jest.fn(() => ({ query: secretQuery() }));
+    const logger = new QueryCompletionLogger({ slowMs: 1000 });
+
+    logger.record(input({ query: undefined, resolveQuery }));
+    expect(resolveQuery).not.toHaveBeenCalled();
+
+    logger.record(input({ query: undefined, resolveQuery, startedAt: msAgo(5000) }));
+    expect(resolveQuery).toHaveBeenCalledTimes(1);
+    expect(lines()[0]).toMatchObject({ cubes: ['Customers', 'Orders'], measureCount: 1 });
+  });
+
   describe('recordError (cube.error)', () => {
     const errorInput = (overrides: Record<string, unknown> = {}) => ({
       context: { requestId: 'req-e', securityContext: { tenantId: 'tenant-a', apiKey: 'sk-SECRETKEY' } },

@@ -42,6 +42,11 @@ export interface CompletionInput {
   slowQuery?: boolean;
   rowCount?: number;
   error?: CompletionError;
+  /**
+   * Produces `query` / `queryUnparsable` lazily (e.g. parses a GET query string); called only
+   * when a line is written, and its result replaces both fields. Must not throw.
+   */
+  resolveQuery?: () => { query?: unknown, queryUnparsable?: boolean };
 }
 
 export interface ErrorEventInput {
@@ -476,8 +481,9 @@ export class QueryCompletionLogger {
     }
   }
 
-  protected recordUnsafe(input: CompletionInput): void {
-    if (!isObj(input)) return;
+  protected recordUnsafe(rawInput: CompletionInput): void {
+    if (!isObj(rawInput)) return;
+    let input = rawInput;
 
     const context: Record<string, any> = isObj(input.context) ? input.context : {};
     const rawRequestId = safeGet(context, 'requestId');
@@ -514,6 +520,11 @@ export class QueryCompletionLogger {
     const configured = currentLogLevel();
     if (!levelEnabled(configured, level)) {
       return;
+    }
+
+    if (typeof input.resolveQuery === 'function') {
+      const resolved = input.resolveQuery();
+      input = { ...input, query: resolved?.query, queryUnparsable: resolved?.queryUnparsable };
     }
 
     const fields: Record<string, unknown> = {

@@ -850,7 +850,12 @@ class ApiGateway {
         return;
       }
 
-      const completion = { ...input, ...this.queryForLog(input.query) };
+      // A query string (GET) is parsed only when a line is actually written: the metrics do
+      // not need the query, and most successful requests write no line at the default level
+      const rawQuery = input.query;
+      const completion: Omit<CompletionInput, 'status' | 'error'> = typeof rawQuery === 'string'
+        ? { ...input, query: undefined, resolveQuery: () => this.queryForLog(rawQuery) }
+        : input;
 
       if (!failure) {
         this.queryCompletionLogger.record({ ...completion, status: 200 });
