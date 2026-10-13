@@ -61,7 +61,7 @@ debug (`Orchestrator error`, `Internal Server Error`, `Slow Query Warning`, ...)
 | `LOG_SLOW_QUERY_MS` | `1000` | A completed request with `durationMs` above this is `slow: true` and logged at `warn`. A non-negative integer; anything else (`1s`, `-5`, blank) means `1000` |
 | `LOG_DEBUG_FULL_QUERY` | `false` | When `true` (case-insensitive; anything else is `false`) AND the level is `debug` or lower, slow/failed lines also carry `query` (the full query JSON, truncated to 4096 chars). This includes filter values: leave it off in production |
 | `CUBEJS_LOG_REDACTION` | `true` (`false` in dev mode) | Redacts query values in legacy log events; also redacts Error text passed through the logger. With it `false`, `prodLogger` now writes an Error's `name`, `message` and `stack` (cut to 2000 chars); before this change an Error serialised as `{}` |
-| `CUBEJS_WEB_SOCKETS_PING_INTERVAL` | `30` | Seconds between WebSocket pings. A connection that neither answered a ping nor sent a message since the previous ping is terminated, so dead connections are detected within 1-2 intervals and their subscriptions removed. `0` disables the keepalive (kill switch). A non-negative integer; anything else (`abc`, `-5`, blank) means `30` |
+| `CUBEJS_WEB_SOCKETS_PING_INTERVAL` | `30` | Seconds between WebSocket pings. A connection that neither answered a ping nor sent a message since the previous ping is terminated, so dead connections are detected within 1-2 intervals and their subscriptions removed. `0` disables the keepalive (kill switch). A non-negative integer, capped at `86400` (one day: a larger value would overflow the timer); anything else (`abc`, `-5`, blank) means `30` |
 | `HOSTNAME` | unset | Value of the `pod` log field and `pod` metric tag (`unknown` for metrics when unset) |
 | `DD_AGENT_HOST` | `127.0.0.1` | StatsD target |
 | `DD_SERVICE` | `unknown` | Metric prefix: every metric is `transai.<DD_SERVICE>.<name>` |
@@ -164,18 +164,25 @@ on failure. Fields: `ts, level, event, pod, requestId, tenantId, source` (`sched
 ### WebSocket keepalive
 
 The WebSocket server (`cubejs-server`) pings every connection every `CUBEJS_WEB_SOCKETS_PING_INTERVAL` seconds
-(default 30). A connection is kept alive by a `pong` **or by any message from the client** since the previous ping;
-otherwise the next tick terminates it. That fires the normal `close` handling, which removes the connection's
+(default 30). A connection is kept alive by a `pong`, **by any message from the client**, or by outbound progress
+(the connection's send buffer shrank since the previous ping, i.e. a large result is still draining to a slow but
+live client) since the previous ping; otherwise the next tick terminates it. That fires the normal `close` handling, which removes the connection's
 subscriptions (so they stop polling the database) and the server's socket entry. Detection takes between 1 and 2
 intervals (30-60 s by default). No client change is needed: browsers and Node `ws` clients answer pings
 automatically, and a real client that is terminated reconnects and re-sends its subscriptions. Pings also keep idle
 connections alive through load balancers.
 
-Who could be affected: only a custom WebSocket client that neither answers pings nor sends messages at least every
-two intervals; it would be disconnected about once a minute. Watch `ws.connections_terminated`: a healthy fleet shows
-a low, steady number. Set `CUBEJS_WEB_SOCKETS_PING_INTERVAL=0` to turn the feature off.
+Who could be affected: a custom WebSocket client that neither answers pings nor sends messages at least every
+two intervals; it would be disconnected about once a minute. Also a very slow client whose data is already in the
+operating system's send buffer: the ping queues behind that data, and the server cannot see the kernel buffer
+draining, so a client that needs longer than one interval to read what is buffered can be cut off (the client
+reconnects and re-subscribes, which re-runs the query). At the default 30 s this needs a very large result and a very
+slow connection; raise the interval if you see it. Watch `ws.connections_terminated`: a healthy fleet shows a low,
+steady number. Set `CUBEJS_WEB_SOCKETS_PING_INTERVAL=0` to turn the feature off.
 
-Late results of an in-flight poll for a connection that is already gone are dropped silently (no error line).
+Late results of an in-flight poll for a connection that is already gone are dropped silently (no error line), and a
+subscription whose connection was disconnected while its poll was in flight is removed on the next poll instead of
+answering `Not authorized` every 5 s.
 
 **Verify on staging** with `packages/cubejs-server/scripts/ws-half-open-check.js` (not part of the published
 package). It connects, subscribes, freezes its own TCP socket (it stops reading, so it never answers pings while the

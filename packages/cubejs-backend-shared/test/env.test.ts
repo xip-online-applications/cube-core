@@ -838,4 +838,16 @@ describe('getEnv(webSocketsPingInterval)', () => {
     expect(() => getEnv('webSocketsPingInterval')).not.toThrow();
     expect(getEnv('webSocketsPingInterval')).toBe(30);
   });
+
+  // Node clamps a timer above 2^31-1 ms to 1 ms: a huge value ("effectively never") must not turn into a
+  // 1 ms keepalive that terminates every connection
+  test.each([
+    ['86400', 86400],
+    ['86401', 86400],
+    ['2147484', 86400],
+    ['999999999999', 86400],
+  ])('a very large value %j is clamped to one day (%d s)', (raw, expected) => {
+    process.env.CUBEJS_WEB_SOCKETS_PING_INTERVAL = raw;
+    expect(getEnv('webSocketsPingInterval')).toBe(expected);
+  });
 });

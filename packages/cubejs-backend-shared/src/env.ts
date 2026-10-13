@@ -400,11 +400,12 @@ const variables: Record<string, (...args: any) => any> = {
   webSockets: () => get('CUBEJS_WEB_SOCKETS')
     .default('true')
     .asBoolStrict(),
-  // Seconds between WebSocket pings; 0 disables the keepalive. A non-negative integer,
-  // anything else falls back to the default instead of throwing
+  // Seconds between WebSocket pings; 0 disables the keepalive. A non-negative integer, anything else
+  // falls back to the default instead of throwing. Capped at one day: Node clamps a timer above 2^31-1 ms
+  // to 1 ms, which would terminate every connection right after its first ping
   webSocketsPingInterval: () => {
     const raw = (process.env.CUBEJS_WEB_SOCKETS_PING_INTERVAL || '').trim();
-    return /^\d+$/.test(raw) ? parseInt(raw, 10) : 30;
+    return /^\d+$/.test(raw) ? Math.min(parseInt(raw, 10), 86400) : 30;
   },
   serverHeadersTimeout: () => get('CUBEJS_SERVER_HEADERS_TIMEOUT')
     .asInt(),
