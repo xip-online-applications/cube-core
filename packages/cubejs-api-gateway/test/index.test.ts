@@ -2364,6 +2364,7 @@ describe('query completion logging', () => {
 describe('error logging at the default level', () => {
   const SECRET_VALUE = 'victim-s3cr3t@example.com';
   const SECRET_KEY = 'sk-live-SECRETKEY';
+  const BAD_TOKEN = 'not.a.valid-SECRETTOKEN';
   const saved = { ...process.env };
 
   let writeSpy: jest.SpyInstance;
@@ -2550,4 +2551,30 @@ describe('error logging at the default level', () => {
     expect(writeSpy.mock.calls.map(c => String(c[0])).join('')).not.toContain(SECRET_VALUE);
   });
 
+  test('an auth failure logs neither the token nor the query string', async () => {
+    const { app } = build();
+    const query = encodeURIComponent(JSON.stringify(secretQuery()));
+
+    await request(app)
+      .get(`/cubejs-api/v1/load?query=${query}`)
+      .set('Authorization', `Bearer ${BAD_TOKEN}`)
+      .expect(403);
+    await request(app)
+      .get(`/cubejs-api/v1/dry-run?query=${query}`)
+      .set('Authorization', BAD_TOKEN)
+      .expect(403);
+
+    expect(gatewayLogger).toHaveBeenCalled();
+    const logged = JSON.stringify(gatewayLogger.mock.calls);
+    expect(logged).not.toContain('SECRETTOKEN');
+    expect(logged).not.toContain(SECRET_VALUE);
+    expect(logged).not.toContain(encodeURIComponent(SECRET_VALUE));
+    expect(logged).not.toContain('query=');
+    const authEvents = gatewayLogger.mock.calls.filter(([, params]) => params && 'url' in params);
+    expect(authEvents.map(([, params]) => params.url)).toEqual(['/cubejs-api/v1/load', '/cubejs-api/v1/dry-run']);
+
+    const out = writeSpy.mock.calls.map(c => String(c[0])).join('');
+    expect(out).not.toContain('SECRETTOKEN');
+    expect(out).not.toContain(SECRET_VALUE);
+  });
 });

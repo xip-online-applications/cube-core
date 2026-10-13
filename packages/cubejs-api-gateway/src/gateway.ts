@@ -3307,10 +3307,10 @@ class ApiGateway {
       if (e instanceof CubejsHandlerError) {
         const error = e.originalError || e;
         const stack = this.devServer ? error.stack : undefined;
+        // Neither the token nor the query string (it carries the query and its filter values)
         this.log({
           type: error.message,
-          url: req.url,
-          token,
+          url: req.path,
           error: stack || error.toString()
         }, <any>req);
 
@@ -3320,7 +3320,7 @@ class ApiGateway {
         const stack = this.devServer ? e.stack : undefined;
         this.log({
           type: 'Auth Error',
-          token,
+          url: req.path,
           error: stack || e.toString()
         }, <any>req);
 
