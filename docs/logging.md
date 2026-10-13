@@ -23,7 +23,7 @@ at or above `LOG_LEVEL`.
 |---|---|
 | `error` | Failed requests: `cube.query.completed` (`level: error`) on load/sql/meta, `cube.error` on every other endpoint (section 3), failed scheduled-refresh cycles, auth failures, error events from outside request handling (pre-aggregation builds, queue, refresh scheduler, ...) |
 | `warn` | Slow queries (`durationMs > LOG_SLOW_QUERY_MS`) and Continue-wait polls, granularity warnings (once per cube per hour per pod), warning events from outside request handling |
-| `info` (default) | `cube.startup`, `cube.ws.summary` (about 1 per minute per pod), `cube.refresh_cycle`, plus everything above |
+| `info` (default) | `cube.startup`, `cube.ws.summary` (about 1 per minute per pod), `cube.ws.connection_terminated` (at most 1 per minute per pod), `cube.refresh_cycle`, plus everything above |
 | `debug` | Fast successful `cube.query.completed` lines, `cube.ws.renew`, `cube.ws.refresh`, `cube.ws.unsubscribe_unknown`, all legacy events (`Executing SQL`, `Load Request` and similar: any event without an explicit level, error or warning flag is now `debug`), and the detailed per-request error events (`Orchestrator error`, `Internal Server Error`, `User Error`, `Continue wait`, `Forbidden`, ... from the gateway's error handler, plus `Error querying db` and `Slow Query Warning`), which carry the query, the raw error and the whole `securityContext` |
 | `trace` | `cube.granularity_resolved` |
 
@@ -61,6 +61,7 @@ debug (`Orchestrator error`, `Internal Server Error`, `Slow Query Warning`, ...)
 | `LOG_SLOW_QUERY_MS` | `1000` | A completed request with `durationMs` above this is `slow: true` and logged at `warn`. A non-negative integer; anything else (`1s`, `-5`, blank) means `1000` |
 | `LOG_DEBUG_FULL_QUERY` | `false` | When `true` (case-insensitive; anything else is `false`) AND the level is `debug` or lower, slow/failed lines also carry `query` (the full query JSON, truncated to 4096 chars). This includes filter values: leave it off in production |
 | `CUBEJS_LOG_REDACTION` | `true` (`false` in dev mode) | Redacts query values in legacy log events; also redacts Error text passed through the logger. With it `false`, `prodLogger` now writes an Error's `name`, `message` and `stack` (cut to 2000 chars); before this change an Error serialised as `{}` |
+| `CUBEJS_WEB_SOCKETS_PING_INTERVAL` | `30` | Seconds between WebSocket pings. A connection that neither answered a ping nor sent a message since the previous ping is terminated, so dead connections are detected within 1-2 intervals and their subscriptions removed. `0` disables the keepalive (kill switch). A non-negative integer; anything else (`abc`, `-5`, blank) means `30` |
 | `HOSTNAME` | unset | Value of the `pod` log field and `pod` metric tag (`unknown` for metrics when unset) |
 | `DD_AGENT_HOST` | `127.0.0.1` | StatsD target |
 | `DD_SERVICE` | `unknown` | Metric prefix: every metric is `transai.<DD_SERVICE>.<name>` |
@@ -158,6 +159,37 @@ on failure. Fields: `ts, level, event, pod, requestId, tenantId, source` (`sched
 | `cube.ws.renew` | debug | `tenant`, `count`, `cubes` | Subscriptions renewed |
 | `cube.ws.refresh` | debug | `tenant`, `count`, `cubes` | Subscriptions refreshed because cubes changed (replaces the plain-text `Refreshing N subscriptions...` line) |
 | `cube.ws.unsubscribe_unknown` | debug | `connectionId`, `idType`, `activeCount` | Unsubscribe for an id that is not subscribed (replaces the line that listed every active id) |
+| `cube.ws.connection_terminated` | info | `connectionId`, `count`, `pod` | The keepalive terminated an unresponsive connection. Rate limited: at most one line per minute per pod; `count` is the number of terminations since the previous line (the first line is `count: 1`) and `connectionId` is the one that triggered the line |
+
+### WebSocket keepalive
+
+The WebSocket server (`cubejs-server`) pings every connection every `CUBEJS_WEB_SOCKETS_PING_INTERVAL` seconds
+(default 30). A connection is kept alive by a `pong` **or by any message from the client** since the previous ping;
+otherwise the next tick terminates it. That fires the normal `close` handling, which removes the connection's
+subscriptions (so they stop polling the database) and the server's socket entry. Detection takes between 1 and 2
+intervals (30-60 s by default). No client change is needed: browsers and Node `ws` clients answer pings
+automatically, and a real client that is terminated reconnects and re-sends its subscriptions. Pings also keep idle
+connections alive through load balancers.
+
+Who could be affected: only a custom WebSocket client that neither answers pings nor sends messages at least every
+two intervals; it would be disconnected about once a minute. Watch `ws.connections_terminated`: a healthy fleet shows
+a low, steady number. Set `CUBEJS_WEB_SOCKETS_PING_INTERVAL=0` to turn the feature off.
+
+Late results of an in-flight poll for a connection that is already gone are dropped silently (no error line).
+
+**Verify on staging** with `packages/cubejs-server/scripts/ws-half-open-check.js` (not part of the published
+package). It connects, subscribes, freezes its own TCP socket (it stops reading, so it never answers pings while the
+connection stays open, like a sleeping laptop or a dropped NAT mapping), resumes after `--freeze-seconds` and reports
+`PASS` (the server closed the connection) or `FAIL` (still open: keepalive disabled or interval longer than the
+freeze). Exit code 0, 1, or 2 for errors:
+
+```bash
+node packages/cubejs-server/scripts/ws-half-open-check.js --url wss://<host>/ --token <jwt> \
+  --query '{"measures":["<Cube>.count"]}' --freeze-seconds 90
+```
+
+Then check `ws.connections_terminated` went up, a `cube.ws.connection_terminated` line appeared, and the
+`subscriptions` gauge / `cube.ws.summary` dropped for that tenant.
 
 ### `cube.startup`
 
@@ -185,6 +217,8 @@ Sent through StatsD (hot-shots) as `transai.<DD_SERVICE>.<name>`.
 | `queries` | count | `pod, tenant, endpoint, cache, status` | One per completed request: use `.as_rate()` for requests/s |
 | `queries_in_flight` | gauge | `pod` | Requests currently being processed; emitted at most once per second per pod (the final value is flushed) |
 | `ws.unsubscribe_unknown` | count | `pod` | Same event as the debug line, always counted |
+| `ws.connections` | gauge | `pod` | Open WebSocket connections tracked by the keepalive; emitted each ping interval (default 30 s). Absent when the keepalive is disabled |
+| `ws.connections_terminated` | count | `pod` | One per connection the keepalive terminated |
 | `subscriptions` | gauge | `pod, tenant` | Existing; every 60 s |
 | `slow_query` | count | `pod, tenant` | Existing (orchestrator, stale-if-slow) |
 | `resultset_rows` | histogram | `pod, tenant` | Existing |
@@ -225,6 +259,8 @@ Metrics:
 | Misses vs hits (load) | `sum:transai.<service>.queries{endpoint:load} by {cache}.as_rate()` |
 | Errors | `sum:transai.<service>.queries{status:500} by {tenant}.as_rate()` (add other status codes as needed) |
 | Unknown unsubscribes | `sum:transai.<service>.ws.unsubscribe_unknown{*} by {pod}.as_rate()` |
+| Open WebSocket connections per pod | `max:transai.<service>.ws.connections{*} by {pod}` |
+| Dead connections terminated | `sum:transai.<service>.ws.connections_terminated{*} by {pod}.as_count()` |
 
 `query.duration` is sent as a plain StatsD histogram (hot-shots `histogram`). Through the Datadog Agent that
 arrives as `query.duration.avg`, `.median`, `.max`, `.95percentile` and `.count`, per pod, not as a distribution, so
@@ -275,6 +311,9 @@ env:
   # Never enable in production: adds the full query, including filter values
   - name: LOG_DEBUG_FULL_QUERY
     value: "false"
+  # Seconds between WebSocket pings; dead connections are closed within 1-2 intervals. 0 disables it
+  - name: CUBEJS_WEB_SOCKETS_PING_INTERVAL
+    value: "30"
 ```
 
 `CUBEJS_LOG_LEVEL`, if already set in the chart, is still honoured when `LOG_LEVEL` is not set. Remember that
@@ -380,7 +419,7 @@ This MUST be confirmed on a real post-deploy sample; the numbers above are not m
 
 | Topic | Detail |
 |---|---|
-| **Unsubscribe noise** | About 26% of lines were unsubscribes of unknown ids. Investigated hypotheses: (a) number vs string id mismatch: refuted (the message schema coerces ids to strings on both paths); (b) eviction of live subscriptions (older than `heartBeatInterval*4` = 240 s since the last `subscribe()`): possible only when polling stalls, not shown to be the common case; (c) server-side removal then client unsubscribe: refuted (the gateway never calls the unsubscribe callback), only a client sending a double unsubscribe or unsubscribing a plain `load` produces it; (d) unsubscribe on a disconnected connection: silent, not a source; (e) a subscription is stored only after the first poll completes, so an unsubscribe arriving during an in-flight poll finds nothing and the late `subscribe()` then re-creates the subscription: a confirmed way to produce the noise, likely for fast mount/unmount clients, pending the new `ws.unsubscribe_unknown` metric. Recommended follow-up (separate task, it changes subscription semantics): tombstone ids unsubscribed per connection, or ignore a `subscribe()` for an id unsubscribed since the poll began. Behaviour is unchanged here; the noise is now a debug line, a metric and `unsubscribeUnknown` in `cube.ws.summary` |
+| **Unsubscribe noise** | About 26% of lines were unsubscribes of unknown ids. Investigated hypotheses: (a) number vs string id mismatch: refuted (the message schema coerces ids to strings on both paths); (b) eviction of live subscriptions (older than `heartBeatInterval*4` = 240 s since the last `subscribe()`): possible only when polling stalls, not shown to be the common case; (c) server-side removal then client unsubscribe: refuted (the gateway never calls the unsubscribe callback), only a client sending a double unsubscribe or unsubscribing a plain `load` produces it; (d) unsubscribe on a disconnected connection: silent, not a source; (e) a subscription is stored only after the first poll completes, so an unsubscribe arriving during an in-flight poll finds nothing and the late `subscribe()` then re-creates the subscription: a confirmed way to produce the noise, likely for fast mount/unmount clients, pending the new `ws.unsubscribe_unknown` metric. Recommended follow-up (separate task, it changes subscription semantics): tombstone ids unsubscribed per connection, or ignore a `subscribe()` for an id unsubscribed since the poll began. Behaviour is unchanged here; the noise is now a debug line, a metric and `unsubscribeUnknown` in `cube.ws.summary`. Production logs showed the same subscription ids on two connection ids of one client: after a reconnect the client re-sends its subscriptions on the new connection and an unsubscribe queued before the reconnect is flushed there, while the old connection was half-open (the server never saw it die) and kept the subscription and polling it forever, because every server poll refreshed the eviction timestamp. The WebSocket keepalive (section 3) now closes such connections within 30-60 s. Not changed: making eviction depend on client activity, and the client dropping queued unsubscribes on reconnect |
 | **Granularity warning cubes** | The noisy cubes were `hpindigo__*` and `fnMqtt__pulsen__*`. The new events name the offending `cube` and `memberPath`, so the model owners can fix the definitions. Those cube definitions live in another repo and were not changed |
 | **`cache` is derived** | Order: non-`load` endpoint `unknown`, then `no-cache`, `stale`, then `miss` when a query was executed for this request id (database or Cube Store; also for a failed or Continue-wait request that executed), then `unknown` for a failure with no recorded execution, else `hit`. The orchestrator does not report hit/miss, and `hit` only means no execution was recorded by this pod under this request id (a shared Cube Store queue or a joined in-flight query also report `hit`): `miss` is reliable, `hit` is lower confidence. The final poll after a Continue wait may report `hit` (the execution was recorded by an earlier poll). Refresh cycles carry no `cache` field. In the failed-query sample in section 7 no execution was recorded, hence `unknown` |
 | **WebSocket request ids** | WS messages get `<base>-span-<uuid>`, so one connection yields many ids sharing the base. Search by the base prefix |
