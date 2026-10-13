@@ -3,6 +3,8 @@ import { EventEmitter } from 'events';
 import { WebSocketKeepAlive, KeepAliveSocket } from '../src/ws-keepalive';
 
 class FakeSocket extends EventEmitter {
+  public bufferedAmount = 0;
+
   public ping = jest.fn();
 
   public terminate = jest.fn();
@@ -73,6 +75,33 @@ describe('WebSocketKeepAlive', () => {
     tick(3);
     expect(socket.terminate).toHaveBeenCalledTimes(1);
     expect(onTerminate).toHaveBeenCalledTimes(1);
+  });
+
+  test('a socket that is still draining a large outbound message is kept alive even without pongs', () => {
+    // the ping is queued behind the data, so the pong cannot arrive until the buffer is drained
+    keepAlive = new WebSocketKeepAlive({ intervalMs: INTERVAL });
+    const socket = new FakeSocket();
+    keepAlive.add(socket.asSocket(), 'c1');
+
+    for (const buffered of [10_000_000, 7_000_000, 4_000_000, 1_000_000, 0]) {
+      socket.bufferedAmount = buffered;
+      tick();
+    }
+
+    expect(socket.terminate).not.toHaveBeenCalled();
+  });
+
+  test('a socket whose outbound buffer is stuck is terminated like a half-open one', () => {
+    keepAlive = new WebSocketKeepAlive({ intervalMs: INTERVAL });
+    const socket = new FakeSocket();
+    keepAlive.add(socket.asSocket(), 'c1');
+
+    socket.bufferedAmount = 10_000_000;
+    tick();
+    expect(socket.terminate).not.toHaveBeenCalled();
+    tick();
+
+    expect(socket.terminate).toHaveBeenCalledTimes(1);
   });
 
   test('a ping that throws terminates that socket and the loop continues', () => {
