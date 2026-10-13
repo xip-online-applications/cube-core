@@ -7,7 +7,10 @@ estimated rather than measured, it says so.
 ## 1. Overview and levels
 
 Production logs (`prodLogger`) are one JSON object per line on stdout:
-`{"ts","level","event","pod", ...fields}`. `ts` is ISO-8601, `pod` is `HOSTNAME` (null when unset).
+`{"ts","level","event","pod", ...fields}`. `ts` is ISO-8601, `pod` is `HOSTNAME` (null when unset). Key order is
+not significant and differs by emitter: lines from the shared `emitLog` (completion, ws, granularity events) start with
+`ts, level, event, pod`, lines from `prodLogger` (legacy events, `cube.startup`) put the fields first and
+`ts, level, event, pod` last. JSON consumers must not rely on order.
 
 Levels, lowest to highest: `trace < debug < info < warn < error`. A line is written when its level is
 at or above `LOG_LEVEL`.
@@ -74,11 +77,12 @@ Level: `error` if failed, `warn` if slow (or a Continue-wait poll), otherwise `d
 | `query` | Only with `LOG_DEBUG_FULL_QUERY=true` at `debug` level, slow/failed lines only |
 | `error` | Failed or Continue-wait lines only: `{message, type, timeout}` (below) |
 
-`cache` is derived, not reported by the orchestrator: `no-cache` when the request asked for it; `stale` when the
+`cache` is derived, not reported by the orchestrator. Checked in this order, first match wins: `unknown` for
+every endpoint other than `load` (`sql`, `meta`); `no-cache` when the request asked for it; `stale` when the
 stale-if-slow path served a stale result; `miss` when a query was executed for this request (database or Cube
-Store); `hit` when nothing was executed and nothing failed; `unknown` for failures and for `sql` / `meta`.
-After a Continue wait, the final successful poll reuses the same request id but the execution was recorded
-by the earlier poll, so it may report `hit`.
+Store), even if the request then failed or is a Continue-wait poll; `unknown` for a failed request with no
+recorded execution; otherwise `hit`. After a Continue wait, the final successful poll reuses the same request id
+but the execution was recorded by the earlier poll, so it may report `hit`.
 
 `error`: `type` is the handler/user error type, `OrchestratorError`, `ContinueWait` or the error class name.
 A Continue wait is a long-poll timeout, not a failure: level `warn`, `slow: true`, `type: ContinueWait`,
@@ -163,16 +167,23 @@ Metrics:
 
 | Question | Query |
 |---|---|
-| Requests/s per tenant, summed across pods | `sum:transai.<service>.queries{*} by {tenant}.as_rate()` |
+| Requests/s per tenant, summed across pods | `sum:transai.<service>.queries{*} by {tenant}.as_rate()` (use `.as_count()` for totals per interval) |
 | Per tenant and endpoint | `sum:transai.<service>.queries{*} by {tenant,endpoint}.as_rate()` |
 | Concurrency (in flight) per pod | `max:transai.<service>.queries_in_flight{*} by {pod}` |
-| p95 latency per tenant and endpoint | `p95:transai.<service>.query.duration{*} by {tenant,endpoint}` |
+| p95 latency per tenant and endpoint | `max:transai.<service>.query.duration.95percentile{*} by {tenant,endpoint}` (also `.avg`, `.median`, `.max`, `.count`) |
 | Is one pod different from the others? | the same queries `by {pod}` (all metrics above carry `pod`) |
 | Misses vs hits (load) | `sum:transai.<service>.queries{endpoint:load} by {cache}.as_rate()` |
 | Errors | `sum:transai.<service>.queries{status:500} by {tenant}.as_rate()` (add other status codes as needed) |
 | Unknown unsubscribes | `sum:transai.<service>.ws.unsubscribe_unknown{*} by {pod}.as_rate()` |
 
-Logs:
+`query.duration` is sent as a plain StatsD histogram (hot-shots `histogram`). Through the Datadog Agent that
+arrives as `query.duration.avg`, `.median`, `.max`, `.95percentile` and `.count`, per pod, not as a distribution, so
+`p95:` space aggregation does not work and a max over pods of the per-pod p95 is not a true global p95. Recommended
+follow-up (code change in the completion logger, not done here): send it as `distribution`, which enables `p95:`
+across pods.
+
+Logs (Datadog's log pipeline may remap a `status` or `level` attribute to the log severity: the HTTP `status` field
+may need another facet or an exception in the remapper):
 
 | Question | Search / grouping |
 |---|---|
@@ -192,6 +203,10 @@ header, then `traceparent`, else it generates `<uuid>-span-1`. Ask the client to
 (or one per page load); then `@requestId:<prefix>*` finds all lines of a client session. WebSocket requests use
 `<connection base id>-span-<uuid>`, so a search by the `-span-` prefix of the base id returns every message of
 that connection.
+
+Ids are validated: an invalid `x-request-id` or `traceparent` (more than 128 chars, or a character outside
+`A-Za-z0-9+/=._:@~-`) makes the request fail with a `UserError`, so callers must send ids matching that pattern.
+Only the first value of a repeated header is used.
 
 ## 6. Helm values snippet
 
@@ -237,7 +252,7 @@ the granularity warning was emitted by calling `emitLogRateLimited` with the exa
 Startup (198 bytes):
 
 ```json
-{"logLevel":"info","slowQueryMs":1000,"debugFullQuery":false,"version":"1.6.0","devMode":false,"ts":"2026-10-13T00:18:47.946Z","level":"info","event":"cube.startup","pod":"cube-api-7d9f6c5b8-x2k4q"}
+{"logLevel":"info","slowQueryMs":1000,"debugFullQuery":false,"version":"1.8.1","devMode":false,"ts":"2026-10-13T00:18:47.946Z","level":"info","event":"cube.startup","pod":"cube-api-7d9f6c5b8-x2k4q"}
 ```
 
 Slow query (about 690 bytes; a fast query of the same shape writes nothing at `info`):
@@ -274,7 +289,8 @@ Granularity warning (283 bytes, then at most one per cube per hour per pod):
 
 There is no sample log in the repository. This is arithmetic on the figures from the production analysis: a
 3 h sample of about 24.5k lines and about 30 MB (about 1.2 KB per line on average), of which about 1,200 lines
-were `run-scheduled-refresh` requests. The per-category sizes below are my assumptions.
+were `run-scheduled-refresh` requests. The per-category sizes below are my assumptions. The original goal is a
+reduction of at least 80% in log bytes; line count is secondary.
 
 Removed or reduced:
 
@@ -283,28 +299,31 @@ Removed or reduced:
 | Unsubscribe warnings (60+ ids as `string, <id>` pairs, about 20 B per id, plus about 100 B prefix) | 6,350 | 0.8 to 2.0 KB (mid 1.3 KB) | 5 to 12.7 MB (mid 8.3 MB) |
 | `Refreshing ...` (4,500) + `Renewing ...` (3,700) plain-text lines | 8,200 | 0.15 to 0.3 KB | 1.2 to 2.5 MB |
 | Granularity warnings (cubes `hpindigo__*`, `fnMqtt__pulsen__*`) | 640 | 0.25 to 0.4 KB | 0.2 to 0.3 MB |
-| `REST API Request` and other per-request lines (the rest: 24.5k minus the three rows above = about 9.3k, including the 1,200 refresh requests) | about 9,300 | whatever is left of the 30 MB: about 14 to 23 MB, i.e. 1.5 to 2.5 KB each, plausible for a full URL-encoded query | about 14 to 23 MB |
+| `REST API Request` and other per-request lines (24.5k minus the three rows above = about 9.3k, of which about 1,200 are refresh requests and about 8.1k are data/sql/meta requests) | about 9,300 | whatever is left of the 30 MB: about 14.5 to 23.6 MB, i.e. 1.5 to 2.5 KB each, plausible for a full URL-encoded query | about 14.5 to 23.6 MB |
 
 Remaining at `info` after the change:
 
 | Category | Lines (3 h) | Assumption | Bytes |
 |---|---|---|---|
 | `cube.refresh_cycle` | about 1,200 | one per refresh call, 263 B | 0.3 MB |
-| Slow or failed `cube.query.completed` | 150 to 2,100 | 2% to 30% of the roughly 7,000 data requests, about 0.7 KB | 0.1 to 1.5 MB |
-| `cube.ws.summary` | 540 to 1,800 | 1 per minute per pod for 180 min, 3 to 10 pods, 0.2 to 0.3 KB | 0.15 to 0.5 MB |
+| Slow or failed `cube.query.completed` | 160 to 2,430 | 2% to 30% of the about 8.1k data/sql/meta requests, about 0.7 KB | 0.11 to 1.7 MB |
+| `cube.ws.summary` | 540 to 1,800 | 1 per minute per pod for 180 min, 3 to 10 pods; 540 x 0.2 KB to 1,800 x 0.3 KB | 0.11 to 0.54 MB |
 | Granularity warnings | about 10 to 100 | at most one per cube per hour per pod | below 0.05 MB |
 | `cube.startup` | a few | | negligible |
 | Existing error and warning events (unchanged) | unknown | not separable from the sample | not estimated |
 
-Result (reasoned): remaining output about 0.6 to 2.4 MB of 30 MB, i.e. a **bytes reduction of about 92% to 98%**.
-Lines drop from 24.5k to about 2k to 5k (a reduction of about 80% to 92%); the line count falls less than the
-bytes because refresh cycles and ws summaries stay.
+Result (reasoned):
 
-The target of at least 80% is expected to be met on bytes with a wide margin, because the unsubscribe lines
-and the per-request lines with the full query string alone are about 75% to 90% of the sample bytes under these assumptions,
-and neither is written at `info` any more. On line count it is met in most of the range but could sit near
-80% if more than about 25% of data requests are slow. This MUST be confirmed on a real post-deploy sample; the
-numbers above are not measurements.
+| Measure | Remaining | Reduction |
+|---|---|---|
+| Bytes (the target) | about 0.5 to 2.6 MB of 30 MB | **about 91% to 98%**: the 80% target is met under every assumption in the range |
+| Lines (secondary) | about 1.9k to 5.5k of 24.5k | **about 77% to 92%**: below 80% at the pessimistic end |
+
+The byte target is met with a wide margin because the unsubscribe lines and the per-request lines with the full query
+string are together about 27 to 29 MB, i.e. 91% to 95% of the sample bytes under these assumptions, and neither is
+written at `info` any more. The line count falls less than the bytes because refresh cycles and ws summaries stay;
+it drops below 80% when more than about 22% of data requests are slow or failed with 10 pods (about 38% with 3 pods).
+This MUST be confirmed on a real post-deploy sample; the numbers above are not measurements.
 
 ## 8. Open questions and things found but not changed
 
@@ -312,7 +331,7 @@ numbers above are not measurements.
 |---|---|
 | **Unsubscribe noise** | About 26% of lines were unsubscribes of unknown ids. Investigated hypotheses: (a) number vs string id mismatch: refuted (the message schema coerces ids to strings on both paths); (b) eviction of live subscriptions (older than `heartBeatInterval*4` = 240 s since the last `subscribe()`): possible only when polling stalls, not shown to be the common case; (c) server-side removal then client unsubscribe: refuted (the gateway never calls the unsubscribe callback), only a client sending a double unsubscribe or unsubscribing a plain `load` produces it; (d) unsubscribe on a disconnected connection: silent, not a source; (e) a subscription is stored only after the first poll completes, so an unsubscribe arriving during an in-flight poll finds nothing and the late `subscribe()` then re-creates the subscription: a confirmed way to produce the noise, likely for fast mount/unmount clients, pending the new `ws.unsubscribe_unknown` metric. Recommended follow-up (separate task, it changes subscription semantics): tombstone ids unsubscribed per connection, or ignore a `subscribe()` for an id unsubscribed since the poll began. Behaviour is unchanged here; the noise is now a debug line, a metric and `unsubscribeUnknown` in `cube.ws.summary` |
 | **Granularity warning cubes** | The noisy cubes were `hpindigo__*` and `fnMqtt__pulsen__*`. The new events name the offending `cube` and `memberPath`, so the model owners can fix the definitions. Those cube definitions live in another repo and were not changed |
-| **`cache` is derived** | `miss` = a query was executed (database or Cube Store) for this request id, `hit` = otherwise (no error). The orchestrator does not report hit/miss. The final poll after a Continue wait may report `hit` (the execution was recorded by an earlier poll). `sql`, `meta`, failures and refresh cycles report `unknown` |
+| **`cache` is derived** | Order: non-`load` endpoint `unknown`, then `no-cache`, `stale`, then `miss` when a query was executed for this request id (database or Cube Store; also for a failed or Continue-wait request that executed), then `unknown` for a failure with no recorded execution, else `hit`. The orchestrator does not report hit/miss. The final poll after a Continue wait may report `hit` (the execution was recorded by an earlier poll). Refresh cycles carry no `cache` field. In the failed-query sample in section 7 no execution was recorded, hence `unknown` |
 | **WebSocket request ids** | WS messages get `<base>-span-<uuid>`, so one connection yields many ids sharing the base. Search by the base prefix |
 | **SQL API** | The SQL API data path (`sqlApiLoad`) emits no completion line and no `queries` metric; its internal `sql`/`meta` planning calls are suppressed on purpose. `cube.refresh_cycle` covers only REST `run-scheduled-refresh` calls: the refresh scheduler loop inside server-core does not go through the gateway and emits no cycle line |
 | **Error message leak risk** | `error.message` is redacted (query values removed, quoted literals masked for non-user-facing errors, at most 300 chars) but redaction works from the values in the request. Residual risks: relative dates resolved to absolute dates by the planner (an error may echo the resolved date unquoted), values injected by `queryRewrite` (not in the client query), and values echoed unquoted by a database error. The existing orchestrator error events still carry their own detail |
@@ -321,5 +340,7 @@ numbers above are not measurements.
 | **Custom logger and redaction** | With `CUBEJS_LOG_REDACTION` on, an Error passed through the logger is replaced by a redacted copy (message and stack `redacted`), also for a custom `logger` option |
 | **cube.js / Helm wiring** | The chart and any `cube.js` configuration that sets the env vars live in another repo; section 6 is a snippet for it, nothing was changed there. The Dockerfile has no log defaults added |
 | **Tenant cardinality** | The `tenant` tag is client influenced and not bounded (only truncated to 128 chars). Watch the number of distinct tag values in Datadog |
+| **`emitLog` field order** | `emitLog` spreads caller `fields` last, so a caller could override `ts`, `level`, `event` or `pod` (known minor, no current caller does) |
+| **Dev mode** | `devLogger` (dev mode) is not JSON and treats `debug` like `info` |
 | **No measurement** | There is no sample log to measure the reduction; section 7 is reasoned |
 | **Minor, deferred** | `LOG_LEVEL=""` does not fall back to `CUBEJS_LOG_LEVEL`; the log `pod` is `HOSTNAME ?? null` while the metric tag is `unknown`; the in-memory rate-limit map is not pruned (keys are per cube: low cardinality); unparseable WS messages and auth-failure messages log no line; the `x-request-id` is accepted up to 256 chars (truncated in the log) |
