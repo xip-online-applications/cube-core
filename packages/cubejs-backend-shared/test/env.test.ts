@@ -855,3 +855,37 @@ describe('getEnv(logLevel / logSlowQueryMs / logDebugFullQuery)', () => {
     expect(getEnv('logDebugFullQuery')).toBe(expected);
   });
 });
+
+describe('getEnv(webSocketsPingInterval)', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in saved)) delete process.env[k];
+    }
+    Object.assign(process.env, saved);
+  });
+
+  test('defaults to 30 seconds when unset', () => {
+    delete process.env.CUBEJS_WEB_SOCKETS_PING_INTERVAL;
+    expect(getEnv('webSocketsPingInterval')).toBe(30);
+  });
+
+  test('0 is valid and disables the keepalive', () => {
+    process.env.CUBEJS_WEB_SOCKETS_PING_INTERVAL = '0';
+    expect(getEnv('webSocketsPingInterval')).toBe(0);
+  });
+
+  test.each([
+    ['15', 15],
+    [' 20 ', 20],
+  ])('a valid value %j resolves to %d', (raw, expected) => {
+    process.env.CUBEJS_WEB_SOCKETS_PING_INTERVAL = raw;
+    expect(getEnv('webSocketsPingInterval')).toBe(expected);
+  });
+
+  test.each(['abc', '-5', '1.5', '', '  '])('an invalid value %j resolves to 30 and never throws', (raw) => {
+    process.env.CUBEJS_WEB_SOCKETS_PING_INTERVAL = raw;
+    expect(() => getEnv('webSocketsPingInterval')).not.toThrow();
+    expect(getEnv('webSocketsPingInterval')).toBe(30);
+  });
+});
