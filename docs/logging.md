@@ -12,15 +12,19 @@ not significant and differs by emitter: lines from the shared `emitLog` (complet
 `ts, level, event, pod`, lines from `prodLogger` (legacy events, `cube.startup`) put the fields first and
 `ts, level, event, pod` last. JSON consumers must not rely on order.
 
+`ts` is not one of Datadog's reserved date attributes (`timestamp`, `date`, `@timestamp`, ...): add a **Log Date
+Remapper on `ts`** to the Datadog log pipeline. Without it Datadog dates each line by ingestion time, and burst
+timelines across pods are off by the shipping delay.
+
 Levels, lowest to highest: `trace < debug < info < warn < error`. A line is written when its level is
 at or above `LOG_LEVEL`.
 
 | Level | What appears |
 |---|---|
-| `error` | Failed queries (`cube.query.completed`, `level: error`), failed scheduled-refresh cycles, all existing error events |
-| `warn` | Slow queries (`durationMs > LOG_SLOW_QUERY_MS`) and Continue-wait polls, granularity warnings (once per cube per hour per pod), existing warning events |
+| `error` | Failed requests: `cube.query.completed` (`level: error`) on load/sql/meta, `cube.error` on every other endpoint (section 3), failed scheduled-refresh cycles, auth failures, error events from outside request handling (pre-aggregation builds, queue, refresh scheduler, ...) |
+| `warn` | Slow queries (`durationMs > LOG_SLOW_QUERY_MS`) and Continue-wait polls, granularity warnings (once per cube per hour per pod), warning events from outside request handling |
 | `info` (default) | `cube.startup`, `cube.ws.summary` (about 1 per minute per pod), `cube.refresh_cycle`, plus everything above |
-| `debug` | Fast successful `cube.query.completed` lines, `cube.ws.renew`, `cube.ws.refresh`, `cube.ws.unsubscribe_unknown`, and all legacy events (`Executing SQL`, `Load Request` and similar: any event without an explicit level, error or warning flag is now `debug`) |
+| `debug` | Fast successful `cube.query.completed` lines, `cube.ws.renew`, `cube.ws.refresh`, `cube.ws.unsubscribe_unknown`, all legacy events (`Executing SQL`, `Load Request` and similar: any event without an explicit level, error or warning flag is now `debug`), and the detailed per-request error events (`Orchestrator error`, `Internal Server Error`, `User Error`, `Continue wait`, `Forbidden`, ... from the gateway's error handler, plus `Error querying db` and `Slow Query Warning`), which carry the query, the raw error and the whole `securityContext` |
 | `trace` | `cube.granularity_resolved` |
 
 Fast successful queries are NOT logged individually at the default level. They are counted in
@@ -30,21 +34,43 @@ the slow/failed lines for the details.
 The per-request `REST API Request` line (which carried the full URL-encoded query string) is gone: the default
 `requestLoggerMiddleware` is now a no-op. Custom middleware passed through options still runs.
 
+Every failing API request is visible exactly once at the default level: through its `cube.query.completed` line
+(load, subscribe, sql, meta, run-scheduled-refresh) or, for any other endpoint, through a slim `cube.error` line. The
+detailed error events behind it are `debug`. An auth failure also writes its own `error` event (the failure reason
+as `event`, the request path as `url`, `requestId`), never the token and never the query string; on the endpoints
+above that is in addition to the completion line.
+
+**`securityContext` at `info` and above:** the stdout sink (`prodLogger`) replaces a `securityContext` field by a
+flat `tenantId` (`unknown` when the context has none) whenever `LOG_LEVEL` is `info`, `warn` or `error`. The full
+`securityContext` is written only at `debug`/`trace`. A custom `logger` option, the agent and telemetry see the
+original fields.
+
+**Changed line format for legacy events:** every `prodLogger` line, including the error and warning events that
+existed before, now carries `event` and `ts` instead of `message` and `timestamp`. Update in Datadog: facets, saved
+views and monitors that search `@message:"..."` or the log message for a legacy event name (search `@event:"..."`
+instead), anything parsing `timestamp` (use `ts`, with the date remapper above), and monitors on events that are now
+debug (`Orchestrator error`, `Internal Server Error`, `Slow Query Warning`, ...): point them at
+`@event:cube.query.completed @level:error`, `@event:cube.error` or the `queries` metric by `status`.
+
 ## 2. Environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
-| `LOG_LEVEL` | `info` | Minimum level written. Falls back to `CUBEJS_LOG_LEVEL` when `LOG_LEVEL` is unset. `trace`, `debug`, `info`, `warn`, `error`; anything else makes `createLogger` throw |
-| `CUBEJS_LOG_LEVEL` | unset | Legacy name, used only when `LOG_LEVEL` is not set |
-| `LOG_SLOW_QUERY_MS` | `1000` | A completed request with `durationMs` above this is `slow: true` and logged at `warn` |
-| `LOG_DEBUG_FULL_QUERY` | `false` | When `true` AND the level is `debug` or lower, slow/failed lines also carry `query` (the full query JSON, truncated to 4096 chars). This includes filter values: leave it off in production |
-| `CUBEJS_LOG_REDACTION` | `true` (`false` in dev mode) | Redacts query values in legacy log events; also redacts Error text passed through the logger |
+| `LOG_LEVEL` | `info` | Minimum level written: `trace`, `debug`, `info`, `warn`, `error`, trimmed and case-insensitive (`DEBUG` = `debug`). Unset or blank falls back to `CUBEJS_LOG_LEVEL`. Any other value (e.g. `verbose`, `WARNING`) runs at `info` and is reported in `cube.startup` as `logLevelInvalid`; it never stops the server |
+| `CUBEJS_LOG_LEVEL` | unset | Legacy name, used only when `LOG_LEVEL` is unset or blank. Same rules; an unknown value used to make the server fail at startup and now degrades to `info` too |
+| `LOG_SLOW_QUERY_MS` | `1000` | A completed request with `durationMs` above this is `slow: true` and logged at `warn`. A non-negative integer; anything else (`1s`, `-5`, blank) means `1000` |
+| `LOG_DEBUG_FULL_QUERY` | `false` | When `true` (case-insensitive; anything else is `false`) AND the level is `debug` or lower, slow/failed lines also carry `query` (the full query JSON, truncated to 4096 chars). This includes filter values: leave it off in production |
+| `CUBEJS_LOG_REDACTION` | `true` (`false` in dev mode) | Redacts query values in legacy log events; also redacts Error text passed through the logger. With it `false`, `prodLogger` now writes an Error's `name`, `message` and `stack` (cut to 2000 chars); before this change an Error serialised as `{}` |
 | `HOSTNAME` | unset | Value of the `pod` log field and `pod` metric tag (`unknown` for metrics when unset) |
 | `DD_AGENT_HOST` | `127.0.0.1` | StatsD target |
 | `DD_SERVICE` | `unknown` | Metric prefix: every metric is `transai.<DD_SERVICE>.<name>` |
 
 `cube.startup` (info) prints the resolved `logLevel`, `slowQueryMs`, `debugFullQuery`, `version`, `devMode`
-once at boot, so you can check what a pod actually runs with.
+once at boot, so you can check what a pod actually runs with, plus `logLevelInvalid` (the value as set, at most 32
+chars) when the log level setting was not recognised.
+
+The native SQL API logger (`sql-server.ts`, cubesql) still reads only `CUBEJS_LOG_LEVEL`: it logs at `trace` when
+that is `trace`, otherwise at `warn`. `LOG_LEVEL=trace` does not reach it.
 
 ## 3. Events
 
@@ -84,6 +110,11 @@ Store), even if the request then failed or is a Continue-wait poll; `unknown` fo
 recorded execution; otherwise `hit`. After a Continue wait, the final successful poll reuses the same request id
 but the execution was recorded by the earlier poll, so it may report `hit`.
 
+`hit` therefore means "no query execution was recorded by this pod under this request id", not "served from the
+cache". With a shared queue (the Cube Store queue driver) another pod may execute the query, and a request that joins
+an identical query already in flight is recorded under the first request's id: both cases report `hit` without
+`queueWaitMs`/`execMs`. `miss` is reliable; `hit` is a lower-confidence label (an upper bound on real cache hits).
+
 `error`: `type` is the handler/user error type, `OrchestratorError`, `ContinueWait` or the error class name.
 A Continue wait is a long-poll timeout, not a failure: level `warn`, `slow: true`, `type: ContinueWait`,
 `timeout: true`. `message` is at most 300 chars. Query values (filter values, date ranges) are removed.
@@ -92,6 +123,25 @@ Messages written for the API client (`UserError`, handler errors) are otherwise 
 
 Not logged: calls the SQL API makes internally for planning (`sql`/`meta` with no HTTP method), and the SQL API
 data path (see section 8).
+
+### `cube.error`
+
+One line per failed request that has no completion line: `dry-run`, `cubesql`, the SQL API data path, the
+pre-aggregation endpoints, GraphQL, the system endpoints, a WebSocket message rejected before it reached a logged
+method (unparsable, invalid, failed authorization message), a failure in a REST middleware on such a path, and SQL API
+planning calls. Level `error`; a Continue wait (status 200) is `warn`.
+
+| Field | Meaning |
+|---|---|
+| `ts`, `level`, `event`, `pod` | Standard envelope |
+| `requestId`, `tenantId` | As in `cube.query.completed` |
+| `source` | `api` |
+| `type` | Error type: handler/user error type, `OrchestratorError`, `ContinueWait` or the error class name |
+| `status` | HTTP status the error handler sent |
+| `message` | Redacted like `error.message` of the completion line, at most 300 chars; for a SQL statement, quoted literals are always masked |
+
+It carries no query, no query summary and nothing of the `securityContext` but `tenantId`. The detail is in the
+`debug` events of the same `requestId`.
 
 ### `cube.refresh_cycle`
 
@@ -193,6 +243,7 @@ may need another facet or an exception in the remapper):
 | Which pod is slow | `@event:cube.query.completed @slow:true`, group by `@pod` |
 | Cache misses that waited in the queue | `@event:cube.query.completed @queueWaitMs:>1000` |
 | Failed queries | `@event:cube.query.completed @level:error`, group by `@error.type` |
+| Failed requests on other endpoints | `@event:cube.error`, group by `@type` or `@tenantId` |
 | Refresh cycles | `@event:cube.refresh_cycle`, measure `@durationMs` by `@pod` |
 
 Fast successful queries are not in the logs at the default level. To see burst volume use the metrics. To
@@ -310,7 +361,7 @@ Remaining at `info` after the change:
 | `cube.ws.summary` | 540 to 1,800 | 1 per minute per pod for 180 min, 3 to 10 pods; 540 x 0.2 KB to 1,800 x 0.3 KB | 0.11 to 0.54 MB |
 | Granularity warnings | about 10 to 100 | at most one per cube per hour per pod | below 0.05 MB |
 | `cube.startup` | a few | | negligible |
-| Existing error and warning events (unchanged) | unknown | not separable from the sample | not estimated |
+| `cube.error` and error/warning events from outside request handling | unknown | not separable from the sample; the per-request detailed error events are now `debug` | not estimated |
 
 Result (reasoned):
 
@@ -331,16 +382,16 @@ This MUST be confirmed on a real post-deploy sample; the numbers above are not m
 |---|---|
 | **Unsubscribe noise** | About 26% of lines were unsubscribes of unknown ids. Investigated hypotheses: (a) number vs string id mismatch: refuted (the message schema coerces ids to strings on both paths); (b) eviction of live subscriptions (older than `heartBeatInterval*4` = 240 s since the last `subscribe()`): possible only when polling stalls, not shown to be the common case; (c) server-side removal then client unsubscribe: refuted (the gateway never calls the unsubscribe callback), only a client sending a double unsubscribe or unsubscribing a plain `load` produces it; (d) unsubscribe on a disconnected connection: silent, not a source; (e) a subscription is stored only after the first poll completes, so an unsubscribe arriving during an in-flight poll finds nothing and the late `subscribe()` then re-creates the subscription: a confirmed way to produce the noise, likely for fast mount/unmount clients, pending the new `ws.unsubscribe_unknown` metric. Recommended follow-up (separate task, it changes subscription semantics): tombstone ids unsubscribed per connection, or ignore a `subscribe()` for an id unsubscribed since the poll began. Behaviour is unchanged here; the noise is now a debug line, a metric and `unsubscribeUnknown` in `cube.ws.summary` |
 | **Granularity warning cubes** | The noisy cubes were `hpindigo__*` and `fnMqtt__pulsen__*`. The new events name the offending `cube` and `memberPath`, so the model owners can fix the definitions. Those cube definitions live in another repo and were not changed |
-| **`cache` is derived** | Order: non-`load` endpoint `unknown`, then `no-cache`, `stale`, then `miss` when a query was executed for this request id (database or Cube Store; also for a failed or Continue-wait request that executed), then `unknown` for a failure with no recorded execution, else `hit`. The orchestrator does not report hit/miss. The final poll after a Continue wait may report `hit` (the execution was recorded by an earlier poll). Refresh cycles carry no `cache` field. In the failed-query sample in section 7 no execution was recorded, hence `unknown` |
+| **`cache` is derived** | Order: non-`load` endpoint `unknown`, then `no-cache`, `stale`, then `miss` when a query was executed for this request id (database or Cube Store; also for a failed or Continue-wait request that executed), then `unknown` for a failure with no recorded execution, else `hit`. The orchestrator does not report hit/miss, and `hit` only means no execution was recorded by this pod under this request id (a shared Cube Store queue or a joined in-flight query also report `hit`): `miss` is reliable, `hit` is lower confidence. The final poll after a Continue wait may report `hit` (the execution was recorded by an earlier poll). Refresh cycles carry no `cache` field. In the failed-query sample in section 7 no execution was recorded, hence `unknown` |
 | **WebSocket request ids** | WS messages get `<base>-span-<uuid>`, so one connection yields many ids sharing the base. Search by the base prefix |
 | **SQL API** | The SQL API data path (`sqlApiLoad`) emits no completion line and no `queries` metric; its internal `sql`/`meta` planning calls are suppressed on purpose. `cube.refresh_cycle` covers only REST `run-scheduled-refresh` calls: the refresh scheduler loop inside server-core does not go through the gateway and emits no cycle line |
-| **Error message leak risk** | `error.message` is redacted (query values removed, quoted literals masked for non-user-facing errors, at most 300 chars) but redaction works from the values in the request. Residual risks: relative dates resolved to absolute dates by the planner (an error may echo the resolved date unquoted), values injected by `queryRewrite` (not in the client query), and values echoed unquoted by a database error. The existing orchestrator error events still carry their own detail |
+| **Error message leak risk** | `error.message` is redacted (query values removed, quoted literals masked for non-user-facing errors, at most 300 chars) but redaction works from the values in the request. Residual risks: relative dates resolved to absolute dates by the planner (an error may echo the resolved date unquoted), values injected by `queryRewrite` (not in the client query), and values echoed unquoted by a database error. The full detail (raw error, query, `securityContext`) is only in the `debug` events |
 | **Free-form granularity** | `querySummary` keeps a `granularity` token (at most 64 word characters) verbatim. Cube rejects granularities not defined in the model before logging, so only model-defined names reach it |
-| **Legacy events at debug** | Events without an explicit level, error or warning (`Executing SQL`, `Load Request`, ...) are now `debug`. Anything alerting on those at `info` stops matching. Error and warning events keep their level |
+| **Legacy events at debug** | Events without an explicit level, error or warning (`Executing SQL`, `Load Request`, ...) are now `debug`, and so are the gateway's per-request error events and `Slow Query Warning`/`Error querying db`. Anything alerting on those stops matching (see section 1). Error and warning events from outside request handling keep their level; some of them (e.g. the queue's `Error while querying`) still carry query detail, subject to `CUBEJS_LOG_REDACTION` |
 | **Custom logger and redaction** | With `CUBEJS_LOG_REDACTION` on, an Error passed through the logger is replaced by a redacted copy (message and stack `redacted`), also for a custom `logger` option |
 | **cube.js / Helm wiring** | The chart and any `cube.js` configuration that sets the env vars live in another repo; section 6 is a snippet for it, nothing was changed there. The Dockerfile has no log defaults added |
 | **Tenant cardinality** | The `tenant` tag is client influenced and not bounded (only truncated to 128 chars). Watch the number of distinct tag values in Datadog |
 | **`emitLog` field order** | `emitLog` spreads caller `fields` last, so a caller could override `ts`, `level`, `event` or `pod` (known minor, no current caller does) |
 | **Dev mode** | `devLogger` (dev mode) is not JSON and treats `debug` like `info` |
 | **No measurement** | There is no sample log to measure the reduction; section 7 is reasoned |
-| **Minor, deferred** | `LOG_LEVEL=""` does not fall back to `CUBEJS_LOG_LEVEL`; the log `pod` is `HOSTNAME ?? null` while the metric tag is `unknown`; the in-memory rate-limit map is not pruned (keys are per cube: low cardinality); unparseable WS messages and auth-failure messages log no line; the `x-request-id` is accepted up to 256 chars (truncated in the log) |
+| **Minor, deferred** | The log `pod` is `HOSTNAME ?? null` while the metric tag is `unknown`; the in-memory rate-limit map is not pruned (keys are per cube: low cardinality). An `x-request-id`/`traceparent` over 128 chars (or with other characters) is rejected with a `UserError` (section 5); the logger's own 256-char cap on `requestId` is only a safety net |
