@@ -135,6 +135,33 @@ const safeString = (value: unknown): string => {
   }
 };
 
+const STACK_LIMIT = 2000;
+
+// Handles BigInt, Error and circular references; a fresh replacer per call as it keeps state
+const safeReplacer = () => {
+  const ancestors: unknown[] = [];
+  return function replacer(this: unknown, _key: string, value: unknown): unknown {
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    let v = value;
+    if (v instanceof Error) {
+      v = { name: v.name, message: v.message, stack: v.stack?.slice(0, STACK_LIMIT) };
+    }
+    if (typeof v === 'object' && v !== null) {
+      // `this` is the holder of the current key; drop ancestors that are not on the current path
+      while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) {
+        ancestors.pop();
+      }
+      if (ancestors.includes(value)) {
+        return '[Circular]';
+      }
+      ancestors.push(v);
+    }
+    return v;
+  };
+};
+
 export const prodLogger = (filterByLevel: LogLevel) => (event: string, params: LoggerFnParams): void => {
   // Logging must never break a request: nothing below is allowed to throw
   try {
@@ -167,33 +194,6 @@ export const prodLogger = (filterByLevel: LogLevel) => (event: string, params: L
   } catch (e) {
     // swallow
   }
-};
-
-const STACK_LIMIT = 2000;
-
-// Handles BigInt, Error and circular references; a fresh replacer per call as it keeps state
-const safeReplacer = () => {
-  const ancestors: unknown[] = [];
-  return function replacer(this: unknown, _key: string, value: unknown): unknown {
-    if (typeof value === 'bigint') {
-      return value.toString();
-    }
-    let v = value;
-    if (v instanceof Error) {
-      v = { name: v.name, message: v.message, stack: v.stack?.slice(0, STACK_LIMIT) };
-    }
-    if (typeof v === 'object' && v !== null) {
-      // `this` is the holder of the current key; drop ancestors that are not on the current path
-      while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) {
-        ancestors.pop();
-      }
-      if (ancestors.includes(value)) {
-        return '[Circular]';
-      }
-      ancestors.push(v);
-    }
-    return v;
-  };
 };
 
 export const logStartup = (logger: LoggerFn, { version, devMode }: { version: string, devMode: boolean }): void => {

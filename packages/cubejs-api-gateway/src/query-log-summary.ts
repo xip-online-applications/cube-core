@@ -159,10 +159,7 @@ function* walkFilters(filters: unknown, depth = 0): Generator<Record<string, any
   if (!Array.isArray(filters) || depth > MAX_DEPTH) {
     return;
   }
-  for (const f of filters) {
-    if (!isObj(f)) {
-      continue;
-    }
+  for (const f of filters.filter(isObj)) {
     if (Array.isArray(f.and) || Array.isArray(f.or)) {
       yield* walkFilters(f.and, depth + 1);
       yield* walkFilters(f.or, depth + 1);
@@ -193,10 +190,7 @@ export function summarizeQuery(query: unknown, maxLen: number = 500): string {
   try {
     const queries = Array.isArray(query) ? query : [query];
     const parts: string[] = [];
-    for (const q of queries) {
-      if (!isObj(q)) {
-        continue;
-      }
+    for (const q of queries.filter(isObj)) {
       const tokens: string[] = [];
       strArr(q.measures).forEach((m) => tokens.push(`m:${m}`));
       strArr(q.dimensions).forEach((d) => tokens.push(`d:${d}`));
@@ -245,10 +239,7 @@ export function queryStats(query: unknown): QueryStats {
       }
     };
     const queries = Array.isArray(query) ? query : [query];
-    for (const q of queries) {
-      if (!isObj(q)) {
-        continue;
-      }
+    for (const q of queries.filter(isObj)) {
       const measures = strArr(q.measures);
       const dimensions = strArr(q.dimensions);
       const tds = objArr(q.timeDimensions);
