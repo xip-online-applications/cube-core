@@ -47,6 +47,29 @@ describe('structured-log', () => {
     expect(writeSpy).toHaveBeenCalledTimes(1);
   });
 
+  test.each(['DEBUG', ' debug ', 'Debug'])('emitLog treats LOG_LEVEL %j like debug', (raw) => {
+    process.env.LOG_LEVEL = raw;
+    emitLog('debug', 'x');
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['', '   ', 'verbose'])('emitLog treats LOG_LEVEL %j like info and does not throw', (raw) => {
+    process.env.LOG_LEVEL = raw;
+    expect(() => emitLog('debug', 'x')).not.toThrow();
+    expect(writeSpy).not.toHaveBeenCalled();
+    emitLog('info', 'y');
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('emitLog never throws, even when the write or serialisation fails', () => {
+    writeSpy.mockImplementation(() => {
+      throw new Error('EPIPE');
+    });
+    expect(() => emitLog('info', 'x', { a: 1 })).not.toThrow();
+    writeSpy.mockImplementation(() => true);
+    expect(() => emitLog('info', 'y', { big: BigInt(1) })).not.toThrow();
+  });
+
   test('emitLogRateLimited aggregates within window', () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-01-01T00:00:00Z'));

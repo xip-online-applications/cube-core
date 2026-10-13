@@ -346,16 +346,47 @@ const devMode = () => {
   return enabled;
 };
 
+const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error'];
+const MAX_INVALID_LOG_LEVEL_LENGTH = 32;
+const DEFAULT_LOG_SLOW_QUERY_MS = 1000;
+
+/**
+ * The raw log level setting: LOG_LEVEL wins, CUBEJS_LOG_LEVEL is the legacy fallback; a blank
+ * value counts as unset. Trimmed and lower-cased; undefined when neither is set.
+ */
+function rawLogLevel(): string | undefined {
+  const value = (process.env.LOG_LEVEL || '').trim() || (process.env.CUBEJS_LOG_LEVEL || '').trim();
+  return value || undefined;
+}
+
 const variables: Record<string, (...args: any) => any> = {
   devMode,
-  // LOG_LEVEL wins, CUBEJS_LOG_LEVEL is the legacy fallback; undefined when neither is set
-  logLevel: () => get('LOG_LEVEL').asString() ?? get('CUBEJS_LOG_LEVEL').asString(),
-  logSlowQueryMs: () => get('LOG_SLOW_QUERY_MS')
-    .default('1000')
-    .asInt(),
-  logDebugFullQuery: () => get('LOG_DEBUG_FULL_QUERY')
-    .default('false')
-    .asBoolStrict(),
+  // Normalised (trimmed, lower-cased) level; an unknown value resolves to 'info' rather than
+  // throwing, so a typo never stops the server (`logLevelInvalid` reports it). Undefined when
+  // neither LOG_LEVEL nor CUBEJS_LOG_LEVEL is set
+  logLevel: () => {
+    const raw = rawLogLevel();
+    if (raw === undefined) {
+      return undefined;
+    }
+    const level = raw.toLowerCase();
+    return LOG_LEVELS.includes(level) ? level : 'info';
+  },
+  // The unknown log level setting (as set, truncated), or undefined when it is valid or unset
+  logLevelInvalid: () => {
+    const raw = rawLogLevel();
+    if (raw === undefined || LOG_LEVELS.includes(raw.toLowerCase())) {
+      return undefined;
+    }
+    return raw.slice(0, MAX_INVALID_LOG_LEVEL_LENGTH);
+  },
+  // A non-negative integer; anything else falls back to the default instead of throwing
+  logSlowQueryMs: () => {
+    const raw = (process.env.LOG_SLOW_QUERY_MS || '').trim();
+    return /^\d+$/.test(raw) ? parseInt(raw, 10) : DEFAULT_LOG_SLOW_QUERY_MS;
+  },
+  // Only 'true' (any case) enables it; anything else is false instead of throwing
+  logDebugFullQuery: () => (process.env.LOG_DEBUG_FULL_QUERY || '').trim().toLowerCase() === 'true',
   // Off in development mode: there the console is the log sink and runnable SQL is wanted.
   // Callers that resolved dev mode themselves (CreateOptions.devServer beats the env var)
   // pass it in, so the default cannot disagree with the instance it is describing

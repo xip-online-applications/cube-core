@@ -20,20 +20,39 @@ export function getPodName(): string {
   return process.env.HOSTNAME ?? 'unknown';
 }
 
-export function emitLog(level: LogLevel, event: string, fields: Record<string, unknown> = {}): void {
-  const configured = (getEnv('logLevel') as LogLevel | undefined) ?? 'info';
-  if (!levelEnabled(configured, level)) {
-    return;
+/**
+ * The configured log level, normalised by the env getter ('info' when unset or unknown).
+ * Never throws.
+ */
+export function configuredLogLevel(): LogLevel {
+  try {
+    return (getEnv('logLevel') as LogLevel | undefined) ?? 'info';
+  } catch {
+    return 'info';
   }
+}
 
-  const line = {
-    ts: new Date().toISOString(),
-    level,
-    event,
-    pod: process.env.HOSTNAME ?? null,
-    ...fields,
-  };
-  process.stdout.write(`${JSON.stringify(line)}\n`);
+/**
+ * Writes one JSON line to stdout when `level` passes the configured threshold.
+ * Never throws: it runs inside request handling, schema compilation and timers.
+ */
+export function emitLog(level: LogLevel, event: string, fields: Record<string, unknown> = {}): void {
+  try {
+    if (!levelEnabled(configuredLogLevel(), level)) {
+      return;
+    }
+
+    const line = {
+      ts: new Date().toISOString(),
+      level,
+      event,
+      pod: process.env.HOSTNAME ?? null,
+      ...fields,
+    };
+    process.stdout.write(`${JSON.stringify(line)}\n`);
+  } catch {
+    // logging must never throw
+  }
 }
 
 const rateLimitState = new Map<string, { count: number, windowStart: number }>();

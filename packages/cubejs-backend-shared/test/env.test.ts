@@ -747,4 +747,61 @@ describe('getEnv(logLevel / logSlowQueryMs / logDebugFullQuery)', () => {
     process.env.LOG_DEBUG_FULL_QUERY = 'true';
     expect(getEnv('logDebugFullQuery')).toBe(true);
   });
+
+  test.each([
+    ['  debug  ', 'debug'],
+    ['DEBUG', 'debug'],
+    ['Warn', 'warn'],
+    ['TRACE', 'trace'],
+  ])('LOG_LEVEL %j is trimmed and lower-cased to %s', (raw, expected) => {
+    process.env.LOG_LEVEL = raw;
+    expect(getEnv('logLevel')).toBe(expected);
+    expect(getEnv('logLevelInvalid')).toBeUndefined();
+  });
+
+  test.each(['', '   '])('a blank LOG_LEVEL %j falls back to CUBEJS_LOG_LEVEL', (raw) => {
+    process.env.LOG_LEVEL = raw;
+    process.env.CUBEJS_LOG_LEVEL = 'error';
+    expect(getEnv('logLevel')).toBe('error');
+    delete process.env.CUBEJS_LOG_LEVEL;
+    expect(getEnv('logLevel')).toBeUndefined();
+    expect(getEnv('logLevelInvalid')).toBeUndefined();
+  });
+
+  test.each(['verbose', 'WARNING', 'x'.repeat(100)])('an unknown LOG_LEVEL %j resolves to info and is reported, never throws', (raw) => {
+    process.env.LOG_LEVEL = raw;
+    expect(getEnv('logLevel')).toBe('info');
+    expect(getEnv('logLevelInvalid')).toBe(raw.slice(0, 32));
+  });
+
+  test('an unknown CUBEJS_LOG_LEVEL resolves to info instead of throwing', () => {
+    delete process.env.LOG_LEVEL;
+    process.env.CUBEJS_LOG_LEVEL = 'verbose';
+    expect(getEnv('logLevel')).toBe('info');
+    expect(getEnv('logLevelInvalid')).toBe('verbose');
+  });
+
+  test.each(['1s', '-5', 'abc', '', '  ', '1.5'])('an invalid LOG_SLOW_QUERY_MS %j resolves to 1000', (raw) => {
+    process.env.LOG_SLOW_QUERY_MS = raw;
+    expect(getEnv('logSlowQueryMs')).toBe(1000);
+  });
+
+  test('LOG_SLOW_QUERY_MS accepts 0 and surrounding whitespace', () => {
+    process.env.LOG_SLOW_QUERY_MS = '0';
+    expect(getEnv('logSlowQueryMs')).toBe(0);
+    process.env.LOG_SLOW_QUERY_MS = ' 250 ';
+    expect(getEnv('logSlowQueryMs')).toBe(250);
+  });
+
+  test.each([
+    ['abc', false],
+    ['yes', false],
+    ['', false],
+    ['TRUE', true],
+    [' true ', true],
+    ['false', false],
+  ])('LOG_DEBUG_FULL_QUERY %j resolves to %s without throwing', (raw, expected) => {
+    process.env.LOG_DEBUG_FULL_QUERY = raw;
+    expect(getEnv('logDebugFullQuery')).toBe(expected);
+  });
 });
