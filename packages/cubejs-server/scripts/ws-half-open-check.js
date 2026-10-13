@@ -18,6 +18,14 @@ const WebSocket = require('ws');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Resolves when the promise does or after ms, without leaving the timer running
+function orTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(resolve, ms); });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 const USAGE = 'Usage: node ws-half-open-check.js --url <ws-url> --token <jwt> --query <json> [--freeze-seconds 90] [--message-id 2571]';
 
 function parseArgs(argv) {
@@ -94,7 +102,7 @@ async function run({
   });
 
   log(`Connected and subscribed (message id ${messageId}); waiting up to 5 s for the first result`);
-  await Promise.race([firstResult, sleep(5000)]);
+  await orTimeout(firstResult, 5000);
 
   log(`Freezing the TCP socket for ${freezeSeconds} s (no pongs will be sent)`);
   ws._socket.pause();
