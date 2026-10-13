@@ -431,6 +431,87 @@ describe('QueryCompletionLogger', () => {
     b();
     expect(logger.inFlight).toBe(0);
   });
+
+  test('LOG_LEVEL is normalised: DEBUG behaves like debug, an unknown value like info', () => {
+    process.env.LOG_LEVEL = 'DEBUG';
+    new QueryCompletionLogger({ slowMs: 1000 }).record(input());
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    process.env.LOG_LEVEL = 'verbose';
+    new QueryCompletionLogger({ slowMs: 1000 }).record(input());
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('an invalid LOG_SLOW_QUERY_MS or LOG_DEBUG_FULL_QUERY does not throw', () => {
+    process.env.LOG_SLOW_QUERY_MS = '1s';
+    process.env.LOG_DEBUG_FULL_QUERY = 'abc';
+    expect(() => new QueryCompletionLogger()).not.toThrow();
+  });
+
+  describe('recordError (cube.error)', () => {
+    const errorInput = (overrides: Record<string, unknown> = {}) => ({
+      context: { requestId: 'req-e', securityContext: { tenantId: 'tenant-a', apiKey: 'sk-SECRETKEY' } },
+      status: 500,
+      error: { message: `column "${SECRET}" does not exist near '${SECRET}'`, type: 'Error', userFacing: false },
+      query: secretQuery(),
+      ...overrides,
+    });
+
+    test('is a slim error line at the default level', () => {
+      new QueryCompletionLogger().recordError(errorInput());
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+      const [line] = lines();
+      expect(Object.keys(line).sort()).toEqual(
+        ['ts', 'level', 'event', 'pod', 'requestId', 'tenantId', 'source', 'type', 'status', 'message'].sort()
+      );
+      expect(line).toMatchObject({
+        level: 'error', event: 'cube.error', requestId: 'req-e', tenantId: 'tenant-a', source: 'api', type: 'Error', status: 500,
+      });
+      expect(rawLines().join('')).not.toContain(SECRET);
+      expect(rawLines().join('')).not.toContain('SECRETKEY');
+    });
+
+    test('non-user errors have every quoted literal masked, even without a query', () => {
+      new QueryCompletionLogger().recordError(errorInput({ query: undefined }));
+      expect(rawLines().join('')).not.toContain(SECRET);
+      expect(lines()[0].message).toContain('does not exist');
+    });
+
+    test('user errors keep their text with query values redacted', () => {
+      new QueryCompletionLogger().recordError(errorInput({
+        status: 400,
+        error: { message: `Bad value ${SECRET} for 'Orders.status'`, type: 'UserError', userFacing: true },
+      }));
+      const [line] = lines();
+      expect(line.message).toBe("Bad value <redacted> for 'Orders.status'");
+      expect(line.status).toBe(400);
+    });
+
+    test('user errors of a SQL query have quoted literals masked', () => {
+      new QueryCompletionLogger().recordError(errorInput({
+        status: 400,
+        query: { sql: `SELECT * FROM t WHERE x = '${SECRET}'` },
+        error: { message: `Error during planning: '${SECRET}' is not a column`, type: 'UserError', userFacing: true },
+      }));
+      expect(rawLines().join('')).not.toContain(SECRET);
+    });
+
+    test('Continue wait is a warn line, not an error', () => {
+      new QueryCompletionLogger().recordError(errorInput({
+        status: 200,
+        error: { message: 'Continue wait', type: 'ContinueWait', userFacing: true },
+      }));
+      expect(lines()[0]).toMatchObject({ level: 'warn', type: 'ContinueWait', status: 200 });
+    });
+
+    test('respects the configured level and never throws on garbage', () => {
+      process.env.LOG_LEVEL = 'error';
+      const logger = new QueryCompletionLogger();
+      logger.recordError(errorInput({ status: 200, error: { message: 'Continue wait', type: 'ContinueWait' } }));
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(() => logger.recordError(undefined as any)).not.toThrow();
+      expect(() => logger.recordError({ context: null, status: 'x', error: null } as any)).not.toThrow();
+    });
+  });
 });
 
 describe('describeFailure mirrors handleError status mapping', () => {

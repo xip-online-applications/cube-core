@@ -1,5 +1,6 @@
 import { Tracer } from '@cubejs-backend/tracer';
 import {
+  configuredLogLevel,
   emitLog,
   getEnv,
   getPodName,
@@ -41,6 +42,15 @@ export interface CompletionInput {
   slowQuery?: boolean;
   rowCount?: number;
   error?: CompletionError;
+}
+
+export interface ErrorEventInput {
+  context?: Partial<RequestContext>;
+  /** The status `ApiGateway.handleError` sent */
+  status: number;
+  error: CompletionError;
+  query?: unknown;
+  queryUnparsable?: boolean;
 }
 
 export interface QueryCompletionLoggerOptions {
@@ -100,7 +110,8 @@ const safeGet = (obj: unknown, key: string): unknown => {
   }
 };
 
-const currentLogLevel = (): LogLevel => (getEnv('logLevel') as LogLevel | undefined) ?? 'info';
+// The env getter normalises the level (trimmed, lower-cased, unknown -> info) and never throws
+const currentLogLevel = (): LogLevel => configuredLogLevel();
 
 /**
  * Maps an error to the status `ApiGateway.handleError` will send for it and a log-safe
@@ -539,6 +550,47 @@ export class QueryCompletionLogger {
 
     const event = isRefresh ? 'cube.refresh_cycle' : 'cube.query.completed';
     emitLog(level, event, fields);
+  }
+
+  /**
+   * Emits `cube.error`: the default-level trace of a failed request that gets no completion
+   * line (endpoints other than load/sql/meta/run-scheduled-refresh, SQL API data path, WS
+   * messages rejected before dispatch, ...). Slim on purpose: no query, no securityContext
+   * beyond tenantId, the message redacted like the completion line's. A Continue wait (the
+   * long-poll answer, status 200) is a warn line. Never throws.
+   */
+  public recordError(input: ErrorEventInput): void {
+    try {
+      if (!isObj(input)) return;
+
+      const error: Record<string, any> = isObj(input.error) ? input.error : {};
+      const type = safeString(safeGet(error, 'type'));
+      const level: LogLevel = type === 'ContinueWait' ? 'warn' : 'error';
+      if (!levelEnabled(currentLogLevel(), level)) {
+        return;
+      }
+
+      const context: Record<string, any> = isObj(input.context) ? input.context : {};
+      const rawRequestId = safeGet(context, 'requestId');
+      const unparsable = input.queryUnparsable === true;
+      const query = unparsable ? undefined : input.query;
+      // Query values can only be told apart in a REST query; a SQL statement's literals cannot
+      const sqlQuery = isObj(query) && typeof query.sql === 'string';
+
+      emitLog(level, 'cube.error', {
+        requestId: typeof rawRequestId === 'string' && rawRequestId ? truncate(rawRequestId, MAX_REQUEST_ID) : null,
+        tenantId: tenantIdOf(context),
+        source: 'api',
+        type: type ? truncate(type, 64) : 'Error',
+        status: Number.isInteger(input.status) ? input.status : null,
+        message: redactErrorMessage(safeString(safeGet(error, 'message')) ?? '', sqlQuery ? undefined : query, {
+          maskLiterals: safeGet(error, 'userFacing') !== true || sqlQuery,
+          unparsable,
+        }),
+      });
+    } catch {
+      // logging must never break a request
+    }
   }
 
   /**

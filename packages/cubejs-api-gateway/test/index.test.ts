@@ -2360,3 +2360,194 @@ describe('query completion logging', () => {
     expect(gatewayLogger.mock.calls.map(c => c[0])).not.toContain('REST API Request');
   });
 });
+
+describe('error logging at the default level', () => {
+  const SECRET_VALUE = 'victim-s3cr3t@example.com';
+  const SECRET_KEY = 'sk-live-SECRETKEY';
+  const saved = { ...process.env };
+
+  let writeSpy: jest.SpyInstance;
+  let gatewayLogger: jest.Mock;
+
+  const token = () => generateAuthToken({ tenantId: 't-1', apiKey: SECRET_KEY });
+
+  const secretQuery = () => ({
+    measures: ['Foo.bar'],
+    filters: [{ member: 'Foo.id', operator: 'equals', values: [SECRET_VALUE] }],
+  });
+
+  class OrchestratorErrorAdapterApi extends AdapterApiMock {
+    public async executeQuery(): Promise<any> {
+      // The shape OrchestratorApi.executeQuery throws: a plain object carrying the raw DB error
+      // eslint-disable-next-line no-throw-literal
+      throw { error: `Error: column "x" = '${SECRET_VALUE}' does not exist` };
+    }
+  }
+
+  const build = (adapterApi: any = new AdapterApiMock(), options: Partial<ApiGatewayOptions> = {}) => {
+    const apiGateway = new ApiGateway(
+      API_SECRET,
+      compilerApi,
+      async () => adapterApi,
+      gatewayLogger,
+      new DefaultEventEmitter(),
+      {
+        standalone: true,
+        dataSourceStorage: new DataSourceStorageMock(),
+        basePath: '/cubejs-api',
+        refreshScheduler: {},
+        ...options,
+      } as ApiGatewayOptions,
+    );
+    const app = express();
+    app.use(express.json());
+    apiGateway.initApp(app);
+    return { app, apiGateway };
+  };
+
+  beforeEach(() => {
+    process.env.LOG_LEVEL = 'info';
+    gatewayLogger = jest.fn();
+    writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    writeSpy.mockRestore();
+    for (const k of Object.keys(process.env)) {
+      if (!(k in saved)) delete process.env[k];
+    }
+    Object.assign(process.env, saved);
+  });
+
+  const stdoutLines = () => writeSpy.mock.calls
+    .map(c => {
+      try {
+        return JSON.parse(String(c[0]));
+      } catch {
+        return undefined;
+      }
+    })
+    .filter(Boolean);
+
+  // The level server-core's prodLogger gives a logger call: an explicit level wins, then
+  // error -> error, warning -> warn, anything else debug
+  const effectiveLevel = ([, params]: any[]) => {
+    if (params?.level) return params.level;
+    if (params?.error) return 'error';
+    if (params?.warning) return 'warn';
+    return 'debug';
+  };
+  const defaultLevelCalls = () => gatewayLogger.mock.calls.filter(c => !['trace', 'debug'].includes(effectiveLevel(c)));
+
+  const DETAILED_EVENTS = ['Orchestrator error', 'Internal Server Error', 'UserError', 'User Error', 'Continue wait', 'Forbidden'];
+
+  test('a failing /load: detailed events are debug, one completion line, no cube.error, no secrets at info', async () => {
+    const { app } = build(new OrchestratorErrorAdapterApi());
+
+    await request(app)
+      .post('/cubejs-api/v1/load')
+      .set('Content-type', 'application/json')
+      .set('Authorization', token())
+      .send({ query: secretQuery() })
+      .expect(400);
+
+    const detailed = gatewayLogger.mock.calls.filter(([type]) => type === 'Orchestrator error');
+    expect(detailed).toHaveLength(1);
+    // The detail is kept, at debug
+    expect(detailed[0][1]).toMatchObject({ level: 'debug', securityContext: { tenantId: 't-1', apiKey: SECRET_KEY } });
+    expect(JSON.stringify(detailed[0][1])).toContain(SECRET_VALUE);
+
+    for (const call of defaultLevelCalls()) {
+      const json = JSON.stringify(call);
+      expect(json).not.toContain(SECRET_VALUE);
+      expect(json).not.toContain(SECRET_KEY);
+      expect(json).not.toContain('"filters"');
+    }
+
+    const lines = stdoutLines();
+    expect(lines.filter(l => l.event === 'cube.query.completed')).toHaveLength(1);
+    expect(lines.filter(l => l.event === 'cube.query.completed')[0]).toMatchObject({
+      level: 'error', status: 400, tenantId: 't-1', error: { type: 'OrchestratorError' },
+    });
+    expect(lines.filter(l => l.event === 'cube.error')).toHaveLength(0);
+    const out = writeSpy.mock.calls.map(c => String(c[0])).join('');
+    expect(out).not.toContain(SECRET_VALUE);
+    expect(out).not.toContain(SECRET_KEY);
+  });
+
+  test('a failing endpoint without a completion line emits exactly one slim cube.error', async () => {
+    const { app } = build();
+
+    await request(app)
+      .post('/cubejs-api/v1/dry-run')
+      .set('Content-type', 'application/json')
+      .set('Authorization', token())
+      .set('x-request-id', 'dry-1')
+      .send({ query: { filters: secretQuery().filters } })
+      .expect(400);
+
+    const lines = stdoutLines();
+    expect(lines.filter(l => l.event === 'cube.query.completed')).toHaveLength(0);
+    const errors = lines.filter(l => l.event === 'cube.error');
+    expect(errors).toHaveLength(1);
+    expect(Object.keys(errors[0]).sort()).toEqual(
+      ['ts', 'level', 'event', 'pod', 'requestId', 'tenantId', 'source', 'type', 'status', 'message'].sort()
+    );
+    expect(errors[0]).toMatchObject({
+      level: 'error', requestId: 'dry-1', tenantId: 't-1', source: 'api', type: 'User Error', status: 400,
+    });
+    const out = writeSpy.mock.calls.map(c => String(c[0])).join('');
+    expect(out).not.toContain(SECRET_VALUE);
+    expect(out).not.toContain(SECRET_KEY);
+
+    for (const [type, params] of gatewayLogger.mock.calls) {
+      if (DETAILED_EVENTS.includes(type)) {
+        expect(params.level).toBe('debug');
+      }
+    }
+  });
+
+  test('handleError with completionLogged writes no cube.error; without it, one', () => {
+    const { apiGateway } = build();
+    const context: any = { requestId: 'r-1', securityContext: { tenantId: 't-1', apiKey: SECRET_KEY } };
+    const e = new Error(`boom '${SECRET_VALUE}'`);
+
+    apiGateway.handleError({ e, context, res: jest.fn(), query: secretQuery(), completionLogged: true });
+    expect(stdoutLines().filter(l => l.event === 'cube.error')).toHaveLength(0);
+
+    apiGateway.handleError({ e, context, res: jest.fn(), query: secretQuery() });
+    const errors = stdoutLines().filter(l => l.event === 'cube.error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ level: 'error', status: 500, type: 'Error', requestId: 'r-1', tenantId: 't-1' });
+    expect(errors[0].message).not.toContain(SECRET_VALUE);
+
+    const detailed = gatewayLogger.mock.calls.filter(([type]) => type === 'Internal Server Error');
+    expect(detailed).toHaveLength(2);
+    for (const [, params] of detailed) {
+      expect(params.level).toBe('debug');
+    }
+  });
+
+  test('a request context failure: one completion line on a covered path, one cube.error elsewhere', async () => {
+    const { app } = build(new AdapterApiMock(), {
+      extendContext: () => {
+        throw new Error(`context failed for '${SECRET_VALUE}'`);
+      },
+    });
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', token())
+      .expect(500);
+    expect(stdoutLines().map(l => l.event)).toEqual(['cube.query.completed']);
+
+    writeSpy.mockClear();
+    await request(app)
+      .get('/cubejs-api/v1/dry-run?query={"measures":["Foo.bar"]}')
+      .set('Authorization', token())
+      .expect(500);
+    expect(stdoutLines().map(l => l.event)).toEqual(['cube.error']);
+    expect(writeSpy.mock.calls.map(c => String(c[0])).join('')).not.toContain(SECRET_VALUE);
+  });
+
+});

@@ -74,6 +74,7 @@ export class SubscriptionServer {
     this.#cubeRenewedPipe.subscribe(this.renewCubes.bind(this));
   }
 
+
   protected resultFn(connectionId: string, messageId: string | undefined, requestId: string | undefined, logNetworkUsage: boolean = true) {
     return async (message, { status } = { status: 200 }) => {
       if (logNetworkUsage) {
@@ -134,6 +135,7 @@ export class SubscriptionServer {
 
       await this.handleMessage(connectionId, message, false);
     } catch (e) {
+      // A message that cannot be parsed or validated gets no completion line: cube.error
       this.apiGateway.handleError({
         e,
         query: message?.query,
@@ -266,31 +268,39 @@ export class SubscriptionServer {
         ? message.params.query
         : undefined;
 
+      const endpoint = endpointForWsMethod('method' in message ? message.method : undefined);
+      // Once dispatched, a wired gateway method has written the request's completion line itself;
+      // before that, recordFailure writes it for a wired method. Otherwise handleError writes
+      // cube.error, so the failure is visible exactly once at the default level
+      const completionLogged = dispatched
+        ? Boolean(endpoint)
+        : this.recordFailure({
+          context,
+          endpoint,
+          startedAt,
+          e,
+        });
+
       this.apiGateway.handleError({
         e,
         query,
         res: this.resultFn(connectionId, messageId, context.requestId),
-        context
+        context,
+        completionLogged,
       });
-      if (!dispatched) {
-        this.recordFailure({
-          context,
-          endpoint: endpointForWsMethod('method' in message ? message.method : undefined),
-          startedAt,
-          e,
-        });
-      }
     }
   }
 
   /**
-   * Completion line for a message that failed before its gateway method ran. Never throws.
+   * Completion line for a message that failed before its gateway method ran. Returns whether a
+   * completion line covers the message. Never throws.
    */
-  protected recordFailure(params: { context?: Partial<ExtendedRequestContext>, endpoint?: Endpoint, startedAt: Date, e: unknown }) {
+  protected recordFailure(params: { context?: Partial<ExtendedRequestContext>, endpoint?: Endpoint, startedAt: Date, e: unknown }): boolean {
     try {
-      this.apiGateway.recordRequestFailure({ ...params, method: 'WS' });
+      return this.apiGateway.recordRequestFailure({ ...params, method: 'WS' });
     } catch {
       // logging must never break message handling
+      return false;
     }
   }
 

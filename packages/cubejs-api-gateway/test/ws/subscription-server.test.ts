@@ -308,6 +308,54 @@ describe('SubscriptionServer', () => {
 
       expect(sentMessages).toContainEqual({ messageId: '123', message: { error: 'Not authorized' }, status: 403 });
     });
+
+    // handleError writes cube.error unless completionLogged: each failure visible exactly once
+    const completionLoggedFor = async (message: object, setupMocks: (m: any) => void = () => undefined) => {
+      const m = createMocks();
+      m.mockApiGateway.recordRequestFailure = jest.fn(({ endpoint }) => Boolean(endpoint));
+      setupMocks(m);
+      const server = new SubscriptionServer(m.mockApiGateway, m.mockSendMessage, m.mockSubscriptionStore, m.mockContextAcceptor, m.mockEventEmitterInterface);
+      await server.processMessage('conn-1', JSON.stringify(message));
+      expect(m.mockApiGateway.handleError).toHaveBeenCalledTimes(1);
+      return m.mockApiGateway.handleError.mock.calls[0][0].completionLogged;
+    };
+
+    it('a wired method failing before dispatch is covered by its completion line', async () => {
+      expect(await completionLoggedFor(
+        { method: 'load', messageId: '1', params: { query: {} } },
+        (m) => m.mockApiGateway.contextByReq.mockRejectedValue(new Error('context failed')),
+      )).toBe(true);
+    });
+
+    it('an unwired method failing before dispatch is not covered (cube.error)', async () => {
+      expect(await completionLoggedFor(
+        { method: 'dry-run', messageId: '1', params: { query: {} } },
+        (m) => m.mockApiGateway.contextByReq.mockRejectedValue(new Error('context failed')),
+      )).toBe(false);
+    });
+
+    it('an error escaping a dispatched wired method is covered; an unwired one is not', async () => {
+      expect(await completionLoggedFor(
+        { method: 'load', messageId: '1', params: { query: {} } },
+        (m) => m.mockApiGateway.load.mockRejectedValue(new Error('escaped')),
+      )).toBe(true);
+      expect(await completionLoggedFor(
+        { method: 'dry-run', messageId: '1', params: { query: {} } },
+        (m) => m.mockApiGateway.dryRun.mockRejectedValue(new Error('escaped')),
+      )).toBe(false);
+    });
+
+    it('an auth message failure and an unparsable message are not covered (cube.error)', async () => {
+      expect(await completionLoggedFor(
+        { authorization: 't' },
+        (m) => m.mockApiGateway.checkAuthFn.mockRejectedValue(new Error('bad token')),
+      )).toBe(false);
+
+      const m = createMocks();
+      const server = new SubscriptionServer(m.mockApiGateway, m.mockSendMessage, m.mockSubscriptionStore, m.mockContextAcceptor, m.mockEventEmitterInterface);
+      await server.processMessage('conn-1', '{not json');
+      expect(m.mockApiGateway.handleError.mock.calls[0][0].completionLogged).toBeFalsy();
+    });
   });
 
   describe('Method Dispatch', () => {
