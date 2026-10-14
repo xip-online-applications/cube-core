@@ -20,6 +20,7 @@ import {
 } from './mocks';
 import { ApiScopesTuple } from '../src/types/auth';
 import { PreAggJob } from '../src/types/request';
+import { QueryCompletionLogger, CompletionInput } from '../src/query-completion-logger';
 
 // The redaction pass lives in the native module; only its plumbing is under test here.
 // A Proxy rather than a spread: the module's exports are non-enumerable getters.
@@ -2011,5 +2012,569 @@ describe('API Gateway', () => {
       expect(res.body.external).toBe(true);
       expect(res.body.usedPreAggregations).toEqual(usedPreAggregations);
     });
+  });
+});
+
+describe('query completion logging', () => {
+  const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M';
+
+  class ApiGatewayWithCompletionLogger extends ApiGateway {
+    public get completionLogger(): QueryCompletionLogger {
+      return this.queryCompletionLogger;
+    }
+  }
+
+  const build = (options: Partial<ApiGatewayOptions> = {}, gatewayLogger: any = logger, adapterApi: any = new AdapterApiMock()) => {
+    const apiGateway = new ApiGatewayWithCompletionLogger(
+      API_SECRET,
+      compilerApi,
+      async () => adapterApi,
+      gatewayLogger,
+      new DefaultEventEmitter(),
+      {
+        standalone: true,
+        dataSourceStorage: new DataSourceStorageMock(),
+        basePath: '/cubejs-api',
+        refreshScheduler: {},
+        ...options,
+      } as ApiGatewayOptions,
+    );
+    const app = express();
+    app.use(express.json());
+    apiGateway.initApp(app);
+    return { app, apiGateway };
+  };
+
+  let recordSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    recordSpy = jest.spyOn(QueryCompletionLogger.prototype, 'record');
+  });
+
+  afterEach(() => {
+    recordSpy.mockRestore();
+  });
+
+  const records = (): CompletionInput[] => recordSpy.mock.calls.map(c => c[0]);
+
+  test('successful /load records exactly one completion and releases in-flight', async () => {
+    const { app, apiGateway } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', method: 'GET', status: 200 });
+    expect(records()[0].error).toBeUndefined();
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('POST /load records the POST method', async () => {
+    const { app } = build();
+
+    await request(app)
+      .post('/cubejs-api/v1/load')
+      .set('Content-type', 'application/json')
+      .set('Authorization', TOKEN)
+      .send({ query: { measures: ['Foo.bar'] }, cache: 'no-cache' })
+      .expect(200);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', method: 'POST', status: 200, cacheMode: 'no-cache' });
+  });
+
+  test('failing /load records exactly one completion with the error and releases in-flight', async () => {
+    const { app, apiGateway } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={}')
+      .set('Authorization', TOKEN)
+      .expect(400);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', status: 400 });
+    expect(records()[0].error?.message).toContain('Query should contain either measures');
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('x-request-id becomes the requestId of the record', async () => {
+    const { app } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .set('x-request-id', 'abc-1')
+      .expect(200);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0].context.requestId).toBe('abc-1');
+  });
+
+  test('auth failure before a query exists records one completion', async () => {
+    const { app, apiGateway } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', 'foo')
+      .expect(403);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', method: 'GET', status: 403 });
+    expect(records()[0].query).toBeUndefined();
+    expect(records()[0].error?.message).toBe('Invalid token');
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('request context failure records one completion', async () => {
+    const { app } = build({
+      extendContext: () => {
+        throw new Error('Server should not crash');
+      },
+    });
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(500);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0]).toMatchObject({ endpoint: 'load', status: 500 });
+  });
+
+  test('/sql and /meta record one completion each', async () => {
+    const { app } = build();
+
+    await request(app)
+      .get(`/cubejs-api/v1/sql?query=${encodeURIComponent(JSON.stringify({ measures: ['Foo.bar'] }))}`)
+      .set('Authorization', TOKEN)
+      .expect(200);
+    await request(app)
+      .get('/cubejs-api/v1/meta')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(records().map(r => [r.endpoint, r.method, r.status])).toEqual([
+      ['sql', 'GET', 200],
+      ['meta', 'GET', 200],
+    ]);
+  });
+
+  test('a throwing completion logger does not break the response', async () => {
+    recordSpy.mockImplementation(() => {
+      throw new Error('logger exploded');
+    });
+    const { app, apiGateway } = build();
+
+    const res = await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(res.body.data).toBeDefined();
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  describe('emitted lines', () => {
+    const saved = { ...process.env };
+    let writeSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      process.env.LOG_LEVEL = 'debug';
+      delete process.env.LOG_DEBUG_FULL_QUERY;
+      writeSpy = jest.spyOn(process.stdout, 'write');
+    });
+
+    afterEach(() => {
+      writeSpy.mockRestore();
+      for (const k of Object.keys(process.env)) {
+        if (!(k in saved)) delete process.env[k];
+      }
+      Object.assign(process.env, saved);
+    });
+
+    const completedLines = () => writeSpy.mock.calls
+      .map(c => {
+        try {
+          return JSON.parse(String(c[0]));
+        } catch {
+          return undefined;
+        }
+      })
+      .filter(l => l && l.event === 'cube.query.completed');
+
+    test('Continue wait from the orchestrator is one warn line, not an error', async () => {
+      class ContinueWaitAdapterApi extends AdapterApiMock {
+        public async executeQuery(): Promise<any> {
+          // The orchestrator signals a long-poll timeout with a plain object, not an Error
+          // eslint-disable-next-line no-throw-literal
+          throw { error: 'Continue wait' };
+        }
+      }
+      process.env.LOG_LEVEL = 'info';
+      const { app } = build({}, logger, new ContinueWaitAdapterApi());
+
+      await request(app)
+        .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+        .set('Authorization', TOKEN)
+        .expect(200);
+
+      const lines = completedLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({
+        level: 'warn',
+        slow: true,
+        status: 200,
+        error: { type: 'ContinueWait', timeout: true },
+      });
+    });
+
+    test('GET /sql with a JSON string logs the parsed query, hashed like the POST form', async () => {
+      const { app } = build();
+      const query = { measures: ['Foo.bar'], dimensions: ['Foo.id'] };
+
+      await request(app)
+        .get(`/cubejs-api/v1/sql?query=${encodeURIComponent(JSON.stringify(query))}`)
+        .set('Authorization', TOKEN)
+        .expect(200);
+      await request(app)
+        .post('/cubejs-api/v1/sql')
+        .set('Content-type', 'application/json')
+        .set('Authorization', TOKEN)
+        .send({ query })
+        .expect(200);
+
+      const [get, post] = completedLines();
+      expect(get).toMatchObject({ endpoint: 'sql', method: 'GET', cubes: ['Foo'], dimensionCount: 1, measureCount: 1 });
+      expect(post).toMatchObject({ endpoint: 'sql', method: 'POST', cubes: ['Foo'] });
+      expect(get.queryHash).toBe(post.queryHash);
+      expect(get.queryHash).not.toBe('unparsable00');
+    });
+
+    test('a malformed query string logs the unparsable hash', async () => {
+      const { app } = build();
+
+      await request(app)
+        .get('/cubejs-api/v1/load?query=NOT_A_JSON')
+        .set('Authorization', TOKEN)
+        .expect(400);
+      await request(app)
+        .get('/cubejs-api/v1/sql?query=%7Bbroken')
+        .set('Authorization', TOKEN)
+        .expect(400);
+
+      const lines = completedLines();
+      expect(lines).toHaveLength(2);
+      for (const line of lines) {
+        expect(line).toMatchObject({ level: 'error', status: 400, queryHash: 'unparsable00', cubes: [] });
+      }
+    });
+  });
+
+  test('SQL API internal meta and sql calls record no completion', async () => {
+    const { apiGateway } = build();
+    const context: any = { requestId: 'sql-api-1', securityContext: {} };
+
+    await apiGateway.meta({ context, res: jest.fn() });
+    await apiGateway.sql({ context, query: { measures: ['Foo.bar'] }, res: jest.fn() } as any);
+
+    expect(recordSpy).not.toHaveBeenCalled();
+    expect(apiGateway.completionLogger.inFlight).toBe(0);
+  });
+
+  test('SQL API planning calls (as sql-server.ts makes them) record nothing and are not in flight', async () => {
+    const { apiGateway } = build();
+    const context: any = { requestId: 'sql-api-2', securityContext: {} };
+    const inFlightDuringRes: number[] = [];
+    const res = jest.fn(() => {
+      inFlightDuringRes.push(apiGateway.completionLogger.inFlight);
+    });
+
+    // Mirrors sql-server.ts `meta`
+    await apiGateway.meta({ context, res, includeCompilerId: true, onlyCompilerId: false, apiType: 'sql' });
+    // Mirrors sql-server.ts `sql`
+    await apiGateway.sql({
+      query: { measures: ['Foo.bar'] },
+      memberToAlias: undefined,
+      expressionParams: undefined,
+      exportAnnotatedSql: true,
+      memberExpressions: true,
+      disableExternalPreAggregations: true,
+      queryType: 'multi',
+      disableLimitEnforcing: true,
+      context,
+      res,
+      apiType: 'sql',
+    });
+
+    expect(res).toHaveBeenCalledTimes(2);
+    expect(inFlightDuringRes).toEqual([0, 0]);
+    expect(recordSpy).not.toHaveBeenCalled();
+  });
+
+  test('REST /sql and /meta are in flight while responding', async () => {
+    const { app, apiGateway } = build();
+    const beginSpy = jest.spyOn(QueryCompletionLogger.prototype, 'begin');
+
+    try {
+      await request(app)
+        .get(`/cubejs-api/v1/sql?query=${encodeURIComponent(JSON.stringify({ measures: ['Foo.bar'] }))}`)
+        .set('Authorization', TOKEN)
+        .expect(200);
+      await request(app)
+        .get('/cubejs-api/v1/meta')
+        .set('Authorization', TOKEN)
+        .expect(200);
+
+      expect(beginSpy).toHaveBeenCalledTimes(2);
+      expect(records().map(r => r.endpoint)).toEqual(['sql', 'meta']);
+      expect(apiGateway.completionLogger.inFlight).toBe(0);
+    } finally {
+      beginSpy.mockRestore();
+    }
+  });
+
+  test('auth failure records the x-request-id', async () => {
+    const { app } = build();
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', 'foo')
+      .set('x-request-id', 'abc-2')
+      .expect(403);
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    expect(records()[0].context.requestId).toBe('abc-2');
+  });
+
+  test('no REST API Request line is logged by default', async () => {
+    const gatewayLogger = jest.fn();
+    const { app } = build({}, gatewayLogger);
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', TOKEN)
+      .expect(200);
+
+    expect(gatewayLogger.mock.calls.map(c => c[0])).not.toContain('REST API Request');
+  });
+});
+
+describe('error logging at the default level', () => {
+  const SECRET_VALUE = 'victim-s3cr3t@example.com';
+  const SECRET_KEY = 'sk-live-SECRETKEY';
+  const BAD_TOKEN = 'not.a.valid-SECRETTOKEN';
+  const saved = { ...process.env };
+
+  let writeSpy: jest.SpyInstance;
+  let gatewayLogger: jest.Mock;
+
+  const token = () => generateAuthToken({ tenantId: 't-1', apiKey: SECRET_KEY });
+
+  const secretQuery = () => ({
+    measures: ['Foo.bar'],
+    filters: [{ member: 'Foo.id', operator: 'equals', values: [SECRET_VALUE] }],
+  });
+
+  class OrchestratorErrorAdapterApi extends AdapterApiMock {
+    public async executeQuery(): Promise<any> {
+      // The shape OrchestratorApi.executeQuery throws: a plain object carrying the raw DB error
+      // eslint-disable-next-line no-throw-literal
+      throw { error: `Error: column "x" = '${SECRET_VALUE}' does not exist` };
+    }
+  }
+
+  const build = (adapterApi: any = new AdapterApiMock(), options: Partial<ApiGatewayOptions> = {}) => {
+    const apiGateway = new ApiGateway(
+      API_SECRET,
+      compilerApi,
+      async () => adapterApi,
+      gatewayLogger,
+      new DefaultEventEmitter(),
+      {
+        standalone: true,
+        dataSourceStorage: new DataSourceStorageMock(),
+        basePath: '/cubejs-api',
+        refreshScheduler: {},
+        ...options,
+      } as ApiGatewayOptions,
+    );
+    const app = express();
+    app.use(express.json());
+    apiGateway.initApp(app);
+    return { app, apiGateway };
+  };
+
+  beforeEach(() => {
+    process.env.LOG_LEVEL = 'info';
+    gatewayLogger = jest.fn();
+    writeSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    writeSpy.mockRestore();
+    for (const k of Object.keys(process.env)) {
+      if (!(k in saved)) delete process.env[k];
+    }
+    Object.assign(process.env, saved);
+  });
+
+  const stdoutLines = () => writeSpy.mock.calls
+    .map(c => {
+      try {
+        return JSON.parse(String(c[0]));
+      } catch {
+        return undefined;
+      }
+    })
+    .filter(Boolean);
+
+  // The level server-core's prodLogger gives a logger call: an explicit level wins, then
+  // error -> error, warning -> warn, anything else debug
+  const effectiveLevel = ([, params]: any[]) => {
+    if (params?.level) return params.level;
+    if (params?.error) return 'error';
+    if (params?.warning) return 'warn';
+    return 'debug';
+  };
+  const defaultLevelCalls = () => gatewayLogger.mock.calls.filter(c => !['trace', 'debug'].includes(effectiveLevel(c)));
+
+  const DETAILED_EVENTS = ['Orchestrator error', 'Internal Server Error', 'UserError', 'User Error', 'Continue wait', 'Forbidden'];
+
+  test('a failing /load: detailed events are debug, one completion line, no cube.error, no secrets at info', async () => {
+    const { app } = build(new OrchestratorErrorAdapterApi());
+
+    await request(app)
+      .post('/cubejs-api/v1/load')
+      .set('Content-type', 'application/json')
+      .set('Authorization', token())
+      .send({ query: secretQuery() })
+      .expect(400);
+
+    const detailed = gatewayLogger.mock.calls.filter(([type]) => type === 'Orchestrator error');
+    expect(detailed).toHaveLength(1);
+    // The detail is kept, at debug
+    expect(detailed[0][1]).toMatchObject({ level: 'debug', securityContext: { tenantId: 't-1', apiKey: SECRET_KEY } });
+    expect(JSON.stringify(detailed[0][1])).toContain(SECRET_VALUE);
+
+    for (const call of defaultLevelCalls()) {
+      const json = JSON.stringify(call);
+      expect(json).not.toContain(SECRET_VALUE);
+      expect(json).not.toContain(SECRET_KEY);
+      expect(json).not.toContain('"filters"');
+    }
+
+    const lines = stdoutLines();
+    expect(lines.filter(l => l.event === 'cube.query.completed')).toHaveLength(1);
+    expect(lines.filter(l => l.event === 'cube.query.completed')[0]).toMatchObject({
+      level: 'error', status: 400, tenantId: 't-1', error: { type: 'OrchestratorError' },
+    });
+    expect(lines.filter(l => l.event === 'cube.error')).toHaveLength(0);
+    const out = writeSpy.mock.calls.map(c => String(c[0])).join('');
+    expect(out).not.toContain(SECRET_VALUE);
+    expect(out).not.toContain(SECRET_KEY);
+  });
+
+  test('a failing endpoint without a completion line emits exactly one slim cube.error', async () => {
+    const { app } = build();
+
+    await request(app)
+      .post('/cubejs-api/v1/dry-run')
+      .set('Content-type', 'application/json')
+      .set('Authorization', token())
+      .set('x-request-id', 'dry-1')
+      .send({ query: { filters: secretQuery().filters } })
+      .expect(400);
+
+    const lines = stdoutLines();
+    expect(lines.filter(l => l.event === 'cube.query.completed')).toHaveLength(0);
+    const errors = lines.filter(l => l.event === 'cube.error');
+    expect(errors).toHaveLength(1);
+    expect(Object.keys(errors[0]).sort()).toEqual(
+      ['ts', 'level', 'event', 'pod', 'requestId', 'tenantId', 'source', 'type', 'status', 'message'].sort()
+    );
+    expect(errors[0]).toMatchObject({
+      level: 'error', requestId: 'dry-1', tenantId: 't-1', source: 'api', type: 'User Error', status: 400,
+    });
+    const out = writeSpy.mock.calls.map(c => String(c[0])).join('');
+    expect(out).not.toContain(SECRET_VALUE);
+    expect(out).not.toContain(SECRET_KEY);
+
+    for (const [type, params] of gatewayLogger.mock.calls) {
+      if (DETAILED_EVENTS.includes(type)) {
+        expect(params.level).toBe('debug');
+      }
+    }
+  });
+
+  test('handleError with completionLogged writes no cube.error; without it, one', () => {
+    const { apiGateway } = build();
+    const context: any = { requestId: 'r-1', securityContext: { tenantId: 't-1', apiKey: SECRET_KEY } };
+    const e = new Error(`boom '${SECRET_VALUE}'`);
+
+    apiGateway.handleError({ e, context, res: jest.fn(), query: secretQuery(), completionLogged: true });
+    expect(stdoutLines().filter(l => l.event === 'cube.error')).toHaveLength(0);
+
+    apiGateway.handleError({ e, context, res: jest.fn(), query: secretQuery() });
+    const errors = stdoutLines().filter(l => l.event === 'cube.error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ level: 'error', status: 500, type: 'Error', requestId: 'r-1', tenantId: 't-1' });
+    expect(errors[0].message).not.toContain(SECRET_VALUE);
+
+    const detailed = gatewayLogger.mock.calls.filter(([type]) => type === 'Internal Server Error');
+    expect(detailed).toHaveLength(2);
+    for (const [, params] of detailed) {
+      expect(params.level).toBe('debug');
+    }
+  });
+
+  test('a request context failure: one completion line on a covered path, one cube.error elsewhere', async () => {
+    const { app } = build(new AdapterApiMock(), {
+      extendContext: () => {
+        throw new Error(`context failed for '${SECRET_VALUE}'`);
+      },
+    });
+
+    await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', token())
+      .expect(500);
+    expect(stdoutLines().map(l => l.event)).toEqual(['cube.query.completed']);
+
+    writeSpy.mockClear();
+    await request(app)
+      .get('/cubejs-api/v1/dry-run?query={"measures":["Foo.bar"]}')
+      .set('Authorization', token())
+      .expect(500);
+    expect(stdoutLines().map(l => l.event)).toEqual(['cube.error']);
+    expect(writeSpy.mock.calls.map(c => String(c[0])).join('')).not.toContain(SECRET_VALUE);
+  });
+
+  test('an auth failure logs neither the token nor the query string', async () => {
+    const { app } = build();
+    const query = encodeURIComponent(JSON.stringify(secretQuery()));
+
+    await request(app)
+      .get(`/cubejs-api/v1/load?query=${query}`)
+      .set('Authorization', `Bearer ${BAD_TOKEN}`)
+      .expect(403);
+    await request(app)
+      .get(`/cubejs-api/v1/dry-run?query=${query}`)
+      .set('Authorization', BAD_TOKEN)
+      .expect(403);
+
+    expect(gatewayLogger).toHaveBeenCalled();
+    const logged = JSON.stringify(gatewayLogger.mock.calls);
+    expect(logged).not.toContain('SECRETTOKEN');
+    expect(logged).not.toContain(SECRET_VALUE);
+    expect(logged).not.toContain(encodeURIComponent(SECRET_VALUE));
+    expect(logged).not.toContain('query=');
+    const authEvents = gatewayLogger.mock.calls.filter(([, params]) => params && 'url' in params);
+    expect(authEvents.map(([, params]) => params.url)).toEqual(['/cubejs-api/v1/load', '/cubejs-api/v1/dry-run']);
+
+    const out = writeSpy.mock.calls.map(c => String(c[0])).join('');
+    expect(out).not.toContain('SECRETTOKEN');
+    expect(out).not.toContain(SECRET_VALUE);
   });
 });

@@ -82,7 +82,16 @@ function redactNode(node: unknown, memo: Map<object, unknown>): unknown {
     return out;
   }
 
-  // Primitives, and instances of anything but a plain object (Error, Date, streams)
+  // An Error's text can hold statement values (driver errors quote the offending literal).
+  // Hand over a copy with the same name and a redacted message and stack; the original is untouched.
+  if (node instanceof Error) {
+    const copy = new Error(REDACTED);
+    copy.name = node.name;
+    copy.stack = REDACTED;
+    return copy;
+  }
+
+  // Primitives, and instances of anything but a plain object (Date, streams)
   return node;
 }
 

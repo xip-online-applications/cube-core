@@ -39,3 +39,5 @@ export * from './pool';
 export * from './sql-escape';
 export * from './object-shape';
 export * from './request-id';
+export * from './structured-log';
+export * from './query-execution-tracker';

@@ -1,6 +1,7 @@
 import SqlString from 'sqlstring';
 import R from 'ramda';
 
+import { getEnv, levelEnabled } from '@cubejs-backend/shared';
 import type { LogLevel, LoggerFn, LoggerFnParams } from '@cubejs-backend/shared';
 
 export type { LogLevel } from '@cubejs-backend/shared';
@@ -77,6 +78,7 @@ export const devLogger = (filterByLevel: LogLevel) => (type: string, { error, wa
       }
     }
     // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
+    case 'debug':
     case 'info': {
       if (!error && !warning && [
         'Executing SQL',
@@ -108,80 +110,171 @@ export const devLogger = (filterByLevel: LogLevel) => (type: string, { error, wa
   }
 };
 
-export const prodLogger = (filterByLevel: LogLevel) => (message: string, params: LoggerFnParams): void => {
-  const { error, warning } = params;
-
-  if (!params.level) {
-    if (error) {
-      params.level = 'error';
-    } else if (warning) {
-      params.level = 'warn';
-    } else {
-      params.level = 'info';
-    }
+const resolveProdLevel = ({ level, error, warning }: LoggerFnParams): LogLevel => {
+  if (level) {
+    return level;
   }
+  if (error) {
+    return 'error';
+  }
+  if (warning) {
+    return 'warn';
+  }
+  // Legacy info-style events ('Executing SQL', 'Load Request', ...) carry no level and are noisy
+  return 'debug';
+};
 
-  const logMessage = () => {
-    const { level, timestamp, ...restParams } = params;
-
-    console.log(JSON.stringify({
-      timestamp,
-      level,
-      message,
-      ...restParams,
-    }));
-  };
-
-  // eslint-disable-next-line default-case
-  switch (filterByLevel.toLowerCase()) {
-    case 'trace': {
-      if (!error && !warning) {
-        logMessage();
-        break;
-      }
-    }
-    // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
-    case 'info':
-      if ([
-        'REST API Request',
-      ].includes(message)) {
-        logMessage();
-        break;
-      }
-    // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
-    case 'warn': {
-      if (!error && warning) {
-        logMessage();
-        break;
-      }
-    }
-    // falls through, trick from 90x, levels inheritance, David Blaine: Street Magic
-    case 'error': {
-      if (error) {
-        logMessage();
-        break;
-      }
-    }
+const safeString = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return String(value);
+  } catch (e) {
+    return '[unserializable]';
   }
 };
 
-export const createLogger = (production: boolean, filterByLevel: LogLevel = 'info'): LoggerFn => {
-  switch (filterByLevel.toLowerCase()) {
-    case 'trace':
-    case 'info':
-    case 'warn':
-    case 'error':
-      break;
-    // not used, but let's allow
-    case 'debug':
-      break;
-    default:
-      throw new Error(`Invalid log level: ${filterByLevel}`);
+const STACK_LIMIT = 2000;
+
+// Handles BigInt, Error and circular references; a fresh replacer per call as it keeps state
+const safeReplacer = () => {
+  const ancestors: unknown[] = [];
+  return function replacer(this: unknown, _key: string, value: unknown): unknown {
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    let v = value;
+    if (v instanceof Error) {
+      v = { name: v.name, message: v.message, stack: v.stack?.slice(0, STACK_LIMIT) };
+    }
+    if (typeof v === 'object' && v !== null) {
+      // `this` is the holder of the current key; drop ancestors that are not on the current path
+      while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) {
+        ancestors.pop();
+      }
+      if (ancestors.includes(value)) {
+        return '[Circular]';
+      }
+      ancestors.push(v);
+    }
+    return v;
+  };
+};
+
+const LOG_LEVELS: readonly LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error'];
+const MAX_TENANT_ID = 128;
+
+/**
+ * A configured threshold, trimmed and lower-cased; anything unknown (blank, a typo) is 'info'.
+ * The env getter normalises the same way, so LOG_LEVEL=DEBUG and debug behave alike everywhere.
+ */
+export const normalizeLogLevel = (value: unknown): LogLevel => {
+  const level = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return (LOG_LEVELS as readonly string[]).includes(level) ? level as LogLevel : 'info';
+};
+
+const tenantIdOf = (securityContext: unknown): string => {
+  try {
+    const tenantId = (securityContext as Record<string, unknown> | null | undefined)?.tenantId;
+    if (typeof tenantId === 'string' && tenantId) {
+      return tenantId.slice(0, MAX_TENANT_ID);
+    }
+    if (typeof tenantId === 'number' && Number.isFinite(tenantId)) {
+      return String(tenantId);
+    }
+  } catch (e) {
+    // a hostile getter: fall through
+  }
+  return 'unknown';
+};
+
+const writeProdLine = (event: string, params: LoggerFnParams, level: LogLevel, fullSecurityContext: boolean): void => {
+  const {
+    level: _level, timestamp, message: _message, event: _event, pod: _pod, ts: _ts, ...params0
+  } = params as LoggerFnParams & Record<string, unknown>;
+
+  let restParams: Record<string, unknown> = params0;
+  if (!fullSecurityContext && 'securityContext' in restParams) {
+    const { securityContext, ...withoutSecurityContext } = restParams;
+    restParams = securityContext === undefined || securityContext === null
+      ? withoutSecurityContext
+      : { ...withoutSecurityContext, tenantId: tenantIdOf(securityContext) };
   }
 
+  const ts = timestamp === undefined ? new Date().toISOString() : safeString(timestamp);
+  const eventName = safeString(event);
+  const pod = process.env.HOSTNAME ?? null;
+
+  let serialized: string;
+  try {
+    serialized = JSON.stringify({
+      ...restParams, ts, level, event: eventName, pod,
+    }, safeReplacer());
+  } catch (e) {
+    serialized = JSON.stringify({
+      ts, level, event: eventName, pod, serializationError: true,
+    });
+  }
+
+  process.stdout.write(`${serialized}\n`);
+};
+
+export const prodLogger = (filterByLevel: LogLevel) => {
+  const threshold = normalizeLogLevel(filterByLevel);
+  // The securityContext may hold anything an auth hook put there (keys, emails, claims): below
+  // debug only its tenantId is written. Applied here, in the stdout sink, so the agent and
+  // telemetry wrappers around the logger still receive the original params
+  const fullSecurityContext = levelEnabled(threshold, 'debug');
+
+  return (event: string, params: LoggerFnParams): void => {
+    // Logging must never break a request: nothing below is allowed to throw
+    try {
+      const level = resolveProdLevel(params);
+
+      if (!levelEnabled(threshold, level)) {
+        return;
+      }
+
+      writeProdLine(event, params, level, fullSecurityContext);
+    } catch (e) {
+      // swallow
+    }
+  };
+};
+
+const safeEnv = <T>(read: () => T, fallback: T): T => {
+  try {
+    return read();
+  } catch (e) {
+    return fallback;
+  }
+};
+
+export const logStartup = (logger: LoggerFn, { version, devMode }: { version: string, devMode: boolean }): void => {
+  const logLevelInvalid = safeEnv<string | undefined>(() => getEnv('logLevelInvalid'), undefined);
+  logger('cube.startup', {
+    level: 'info',
+    logLevel: safeEnv(() => getEnv('logLevel'), undefined) ?? 'info', // getEnv('logLevel') has no default
+    // An unknown LOG_LEVEL (as set, truncated): the server runs at info instead
+    ...(logLevelInvalid ? { logLevelInvalid } : {}),
+    slowQueryMs: safeEnv(() => getEnv('logSlowQueryMs'), 1000),
+    debugFullQuery: safeEnv(() => getEnv('logDebugFullQuery'), false),
+    version,
+    devMode,
+  });
+};
+
+/**
+ * An unknown level (a typo in LOG_LEVEL/CUBEJS_LOG_LEVEL) degrades to info instead of
+ * stopping the server; cube.startup reports it as `logLevelInvalid`.
+ */
+export const createLogger = (production: boolean, filterByLevel: LogLevel = 'info'): LoggerFn => {
+  const level = normalizeLogLevel(filterByLevel);
+
   if (production) {
-    return prodLogger(filterByLevel);
+    return prodLogger(level);
   } else {
-    return devLogger(filterByLevel);
+    return devLogger(level);
   }
 };

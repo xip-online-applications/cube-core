@@ -11,6 +11,7 @@ import {
   QueryOrchestratorOptions,
 } from '@cubejs-backend/query-orchestrator';
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
+import { getPodName } from '@cubejs-backend/shared';
 import { Tracer } from '@cubejs-backend/tracer';
 import { DatabaseType, RequestContext } from './types';
 
@@ -127,6 +128,7 @@ export class OrchestratorApi {
       });
 
       Tracer.init().get().histogram('resultset_rows', rowCountFromResult(data), {
+        pod: getPodName(),
         tenant: tenantIdentifier,
       });
 
@@ -166,7 +168,10 @@ export class OrchestratorApi {
           .resultFromCacheIfExists(query);
 
         if ((query.cacheMode === 'stale-if-slow' || query.cacheMode === 'stale-while-revalidate') && fromCache) {
+          // Detail at debug: the request's cube.query.completed line reports it as slow (cache
+          // 'stale') at the default level, without the SQL
           this.logger('Slow Query Warning', {
+            level: 'debug',
             query: queryForLog,
             requestId: query.requestId,
             warning: 'Query is too slow to be renewed during the ' +
@@ -175,10 +180,12 @@ export class OrchestratorApi {
           });
 
           Tracer.init().get().increment('slow_query', 1, {
+            pod: getPodName(),
             tenant: tenantIdentifier,
           });
 
           Tracer.init().get().histogram('resultset_rows', rowCountFromResult(fromCache), {
+            pod: getPodName(),
             tenant: tenantIdentifier,
           });
 
@@ -194,7 +201,11 @@ export class OrchestratorApi {
         };
       }
 
+      // Detail at debug: the SQL, its parameter values and the raw database error may hold
+      // data values; the failure is reported at the default level by the API layer
+      // (cube.query.completed or cube.error) with its message masked
       this.logger('Error querying db', {
+        level: 'debug',
         query: queryForLog,
         params: query.values,
         error: ((err as Error).stack || err),

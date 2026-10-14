@@ -208,9 +208,28 @@ describe('redactLogParams', () => {
 
     const redacted = redactLogParams(params);
 
-    expect(redacted.error).toBe(error);
+    expect(redacted.error).not.toBe(error);
     expect(redacted.startedAt).toBe(startedAt);
-    expect(redacted).toEqual(params);
+    expect(redacted).toEqual({ ...params, error: redacted.error });
+  });
+
+  it('redacts the text of an Error without mutating it', () => {
+    const error = new Error("duplicate key value violates constraint for 's3cr3t'");
+    const redacted = redactLogParams({ error, requestId: 'r1' });
+
+    expect(redacted.error).toBeInstanceOf(Error);
+    expect((redacted.error as Error).name).toBe('Error');
+    expect((redacted.error as Error).message).toBe(REDACTED);
+    expect(JSON.stringify(redacted, Object.getOwnPropertyNames(error))).not.toContain('s3cr3t');
+    expect(String((redacted.error as Error).stack)).not.toContain('s3cr3t');
+    expect(error.message).toContain('s3cr3t');
+  });
+
+  it('redacts Error text through withLogRedaction', () => {
+    const logger = jest.fn();
+    withLogRedaction(logger)('x', { error: new Error("bad 's3cr3t'") });
+    const { error } = logger.mock.calls[0][1];
+    expect(`${error.message}${error.stack}`).not.toContain('s3cr3t');
   });
 });
 

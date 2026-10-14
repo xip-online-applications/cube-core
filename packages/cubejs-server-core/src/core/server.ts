@@ -45,7 +45,7 @@ import { CompilerApi, type CompilerApiOptions } from './CompilerApi';
 import { DevServer } from './DevServer';
 import { agentCollect } from './agentCollect';
 import { OrchestratorStorage } from './OrchestratorStorage';
-import { createLogger } from './logger';
+import { createLogger, logStartup } from './logger';
 import { OptsHandler } from './OptsHandler';
 import {
   driverDependencies,
@@ -221,6 +221,10 @@ export class CubejsServerCore {
     // Wraps the log sink only: the agent and telemetry wrappers installed below
     // sit outside it and forward the original params
     this.logger = getEnv('logRedaction', devMode) ? withLogRedaction(logger) : logger;
+
+    if (!opts.logger) {
+      logStartup(this.logger, { version, devMode });
+    }
 
     this.optsHandler = new OptsHandler(this, opts, systemOptions);
     this.options = this.optsHandler.getCoreInitializedOptions();

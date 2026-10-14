@@ -8,6 +8,7 @@ import { isValidRequestId } from '@cubejs-backend/shared';
 import { UserError } from '../user-error';
 import { ExtendedRequestContext, ContextAcceptorFn } from '../interfaces';
 import { CubejsHandlerError } from '../cubejs-handler-error';
+import { Endpoint, endpointForWsMethod } from '../query-completion-logger';
 import {
   authMessageSchema,
   unsubscribeMessageSchema,
@@ -70,7 +71,18 @@ export class SubscriptionServer {
     protected readonly eventEmitter: EventEmitterInterface
   ) {
     this.eventEmitter.on('cubeRenewed', (val: unknown) => this.#cubeRenewSubject.next(val));
-    this.#cubeRenewedPipe.subscribe(this.renewCubes.bind(this));
+    this.#cubeRenewedSubscription = this.#cubeRenewedPipe.subscribe(this.renewCubes.bind(this));
+  }
+
+  readonly #cubeRenewedSubscription: { unsubscribe(): void };
+
+  /**
+   * Stops the renew pipeline (its bufferTime keeps a timer running). Optional: for owners and
+   * tests that discard the server.
+   */
+  public close() {
+    this.#cubeRenewedSubscription.unsubscribe();
+    this.#cubeRenewSubject.complete();
   }
 
   protected resultFn(connectionId: string, messageId: string | undefined, requestId: string | undefined, logNetworkUsage: boolean = true) {
@@ -133,6 +145,7 @@ export class SubscriptionServer {
 
       await this.handleMessage(connectionId, message, false);
     } catch (e) {
+      // A message that cannot be parsed or validated gets no completion line: cube.error
       this.apiGateway.handleError({
         e,
         query: message?.query,
@@ -144,6 +157,9 @@ export class SubscriptionServer {
   protected async handleMessage(connectionId: string, message: WsMessage, isSubscription: boolean) {
     let authContext: any = {};
     let context: Partial<ExtendedRequestContext> = {};
+    const startedAt = new Date();
+    // Once dispatched, the gateway method records the request's completion line itself
+    let dispatched = false;
 
     const bytes = calcMessageLength(message);
 
@@ -174,6 +190,11 @@ export class SubscriptionServer {
 
       authContext = await this.subscriptionStore.getAuthContext(connectionId);
       if (!authContext) {
+        this.recordFailure({
+          endpoint: endpointForWsMethod('method' in message ? message.method : undefined),
+          startedAt,
+          e: new CubejsHandlerError(403, 'Forbidden', 'Not authorized'),
+        });
         await this.sendMessage(
           connectionId,
           {
@@ -230,6 +251,7 @@ export class SubscriptionServer {
         collectedParams.cacheMode = collectedParams.cache;
         delete collectedParams.cache;
       }
+      dispatched = true;
       await this.apiGateway[method]({
         ...collectedParams,
         connectionId,
@@ -256,12 +278,39 @@ export class SubscriptionServer {
         ? message.params.query
         : undefined;
 
+      const endpoint = endpointForWsMethod('method' in message ? message.method : undefined);
+      // Once dispatched, a wired gateway method has written the request's completion line itself;
+      // before that, recordFailure writes it for a wired method. Otherwise handleError writes
+      // cube.error, so the failure is visible exactly once at the default level
+      const completionLogged = dispatched
+        ? Boolean(endpoint)
+        : this.recordFailure({
+          context,
+          endpoint,
+          startedAt,
+          e,
+        });
+
       this.apiGateway.handleError({
         e,
         query,
         res: this.resultFn(connectionId, messageId, context.requestId),
-        context
+        context,
+        completionLogged,
       });
+    }
+  }
+
+  /**
+   * Completion line for a message that failed before its gateway method ran. Returns whether a
+   * completion line covers the message. Never throws.
+   */
+  protected recordFailure(params: { context?: Partial<ExtendedRequestContext>, endpoint?: Endpoint, startedAt: Date, e: unknown }): boolean {
+    try {
+      return this.apiGateway.recordRequestFailure({ ...params, method: 'WS' });
+    } catch {
+      // logging must never break message handling
+      return false;
     }
   }
 
@@ -285,13 +334,23 @@ export class SubscriptionServer {
       return;
     }
 
-    const subs = updatedValues.map(({ tenantId, cubes }) => this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes)).flat();
+    const perTenant = updatedValues.map(({ tenantId, cubes }) => ({
+      tenantId,
+      cubes,
+      subs: this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes),
+    }));
+    const subs = perTenant.map(t => t.subs).flat();
 
     if (subs.length === 0) {
       return;
     }
 
-    console.log(`Renewing ${subs.length} subscriptions`);
+    for (const { tenantId, cubes, subs: tenantSubs } of perTenant) {
+      if (tenantSubs.length > 0) {
+        // other store implementations may not expose the counter
+        this.subscriptionStore.recordRenew?.(tenantSubs.length, tenantId, cubes);
+      }
+    }
     subs.map(async subscription => {
       this.handleMessage(subscription.connectionId, subscription.message, true);
     });

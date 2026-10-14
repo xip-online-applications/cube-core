@@ -1,3 +1,4 @@
+import { emitLog, getPodName } from '@cubejs-backend/shared';
 import { Tracer } from '@cubejs-backend/tracer';
 
 interface LocalSubscriptionStoreOptions {
@@ -50,13 +51,38 @@ export class LocalSubscriptionStore {
 
   protected readonly heartBeatInterval: number;
 
+  private unsubscribeUnknownCount = 0;
+
+  private refreshCount = 0;
+
+  private renewCount = 0;
+
+  private readonly summaryTimer: NodeJS.Timeout;
+
   public constructor(options: LocalSubscriptionStoreOptions = {}) {
     Tracer.init();
     this.heartBeatInterval = options.heartBeatInterval || 60;
 
-    setInterval(() => {
+    this.summaryTimer = setInterval(() => {
       this.logConnections();
     }, 60 * 1000);
+    this.summaryTimer.unref();
+  }
+
+  /**
+   * Stops the periodic subscription summary. Optional: the timer is unref'd, so it never keeps
+   * the process alive; this is for owners (and tests) that discard the store.
+   */
+  public close() {
+    clearInterval(this.summaryTimer);
+  }
+
+  /**
+   * Records that subscriptions were renewed (called by the SubscriptionServer).
+   */
+  public recordRenew(count: number, tenant?: string, cubes?: string[]) {
+    this.renewCount++;
+    emitLog('debug', 'cube.ws.renew', { tenant, count, cubes });
   }
 
   public async getSubscription(connectionId: string, subscriptionId: string): Promise<LocalSubscriptionStoreSubscription | undefined> {
@@ -85,8 +111,18 @@ export class LocalSubscriptionStore {
     }
 
     if (!connection.subscriptions.has(subscriptionId)) {
-      const activeSubscriptions = Array.from(connection.subscriptions.keys()).map(id => [typeof id, id]).flat().join(', ');
-      console.warn(`[${connectionId}] Trying to unsubscribe non-existing subscription ${typeof subscriptionId} ${subscriptionId}. Active subscriptions: ${activeSubscriptions}`);
+      this.unsubscribeUnknownCount++;
+      emitLog('debug', 'cube.ws.unsubscribe_unknown', {
+        connectionId,
+        idType: typeof subscriptionId,
+        activeCount: connection.subscriptions.size,
+      });
+
+      try {
+        Tracer.init().get().increment('ws.unsubscribe_unknown', 1, { pod: getPodName() });
+      } catch {
+        // metrics must never break unsubscribe
+      }
       return;
     }
 
@@ -138,7 +174,8 @@ export class LocalSubscriptionStore {
   public getSubscriptionsByCubeName(tenantId: string, cubes: Array<string>) {
     const subs = this.getTenantSubscriptions(tenantId).filter(subscription => haveCommonElement(cubes, subscription.cubes));
     if (subs.length > 0) {
-      console.log(`Refreshing ${subs.length} subscriptions for tenant ${tenantId} cause cubes ${cubes.join(', ')} have changed`);
+      this.refreshCount++;
+      emitLog('debug', 'cube.ws.refresh', { tenant: tenantId, count: subs.length, cubes });
     }
     return subs;
   }
@@ -175,14 +212,40 @@ export class LocalSubscriptionStore {
     this.connections.clear();
   }
 
+  /**
+   * The 60 s interval callback. Never throws: an exception here would be uncaught.
+   */
   private logConnections() {
+    try {
+      this.logConnectionsUnsafe();
+    } catch {
+      // metrics and logging must never crash the process
+    } finally {
+      this.unsubscribeUnknownCount = 0;
+      this.refreshCount = 0;
+      this.renewCount = 0;
+    }
+  }
+
+  private logConnectionsUnsafe() {
     const subsPerTenant = getNumberOfSubscriptionsPerTenant(this.connections);
     const tenants = Object.keys(subsPerTenant);
-    
+
     tenants.forEach(tenantIdentifier => {
       Tracer.init().get().gauge('subscriptions', subsPerTenant[tenantIdentifier], {
+        pod: getPodName(),
         tenant: tenantIdentifier,
       });
     });
+
+    const total = tenants.reduce((sum, t) => sum + subsPerTenant[t], 0);
+    if (this.unsubscribeUnknownCount || this.refreshCount || this.renewCount || total > 0) {
+      emitLog('info', 'cube.ws.summary', {
+        subscriptionsByTenant: subsPerTenant,
+        unsubscribeUnknown: this.unsubscribeUnknownCount,
+        refreshes: this.refreshCount,
+        renews: this.renewCount,
+      });
+    }
   }
 }

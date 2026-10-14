@@ -82,7 +82,7 @@ import {
   ContextRejectionMiddlewareFn,
   ContextAcceptorFn,
 } from './interfaces';
-import { getRequestIdFromRequest, requestParser } from './request-parser';
+import { getRequestIdFromRequest } from './request-parser';
 import { UserError } from './user-error';
 import { CubejsHandlerError } from './cubejs-handler-error';
 import { SubscriptionServer, WebSocketSendMessageFn } from './ws/subscription-server';
@@ -100,6 +100,15 @@ import {
   remapToQueryAdapterFormat,
 } from './query';
 import { cachedHandler } from './cached-handler';
+import {
+  CompletionInput,
+  describeFailure,
+  Endpoint,
+  endpointForPath,
+  isSqlApiInternal,
+  QueryCompletionLogger,
+  resolveMethod,
+} from './query-completion-logger';
 import { createJWKsFetcher } from './jwk';
 import { SQLServer, SQLServerConstructorOptions } from './sql-server';
 import { getJsonQueryFromGraphQLQuery, makeSchema } from './graphql';
@@ -120,7 +129,16 @@ type HandleErrorOptions = {
   query?: any,
   /** The redacted twin of `query`, for the log sink to swap in when log redaction is on */
   redactedQuery?: any,
-  requestStarted?: Date
+  requestStarted?: Date,
+  /**
+   * A `cube.query.completed` line covers this request (wired endpoints: load, sql, meta,
+   * metaExtended, run-scheduled-refresh, unless an SQL API planning call; REST middleware and WS
+   * failures on those endpoints). Rule: each failing request is visible exactly once at the
+   * default level. The detailed events handleError writes are debug, so when no completion
+   * line covers the request it writes a slim `cube.error` line instead. Pass true only when
+   * the completion line is (or will be) written for this request.
+   */
+  completionLogged?: boolean,
 };
 
 function userAsyncHandler(handler: (req: Request & { context: ExtendedRequestContext }, res: ExpressResponse) => Promise<void>) {
@@ -262,6 +280,14 @@ class ApiGateway {
 
   protected readonly sqlServer: SQLServer;
 
+  protected readonly queryCompletionLogger: QueryCompletionLogger = new QueryCompletionLogger();
+
+  /**
+   * Errors whose completion line has already been recorded by the endpoint method, so the
+   * Express error middleware does not record a second line for the same request.
+   */
+  private readonly completionRecordedErrors = new WeakSet<object>();
+
   public constructor(
     protected readonly apiSecret: string,
     /**
@@ -396,6 +422,7 @@ class ApiGateway {
         res: this.resToResultFn(res),
         queryType: req.query.queryType,
         cacheMode: req.query.cache,
+        httpMethod: req.method,
       });
     }));
 
@@ -407,6 +434,7 @@ class ApiGateway {
         res: this.resToResultFn(res),
         queryType: req.body.queryType,
         cacheMode: req.body.cache,
+        httpMethod: req.method,
       });
     }));
 
@@ -417,6 +445,7 @@ class ApiGateway {
         res: this.resToResultFn(res),
         queryType: req.query.queryType,
         cacheMode: req.query.cache,
+        httpMethod: req.method,
       });
     }));
 
@@ -427,6 +456,7 @@ class ApiGateway {
         res: this.resToResultFn(res),
         queryType: req.body.queryType,
         cacheMode: req.body.cache,
+        httpMethod: req.method,
       });
     }));
 
@@ -446,7 +476,8 @@ class ApiGateway {
       await this.sql({
         query: req.query.query,
         context: req.context,
-        res: this.resToResultFn(res)
+        res: this.resToResultFn(res),
+        httpMethod: req.method,
       });
     }));
 
@@ -466,7 +497,8 @@ class ApiGateway {
       await this.sql({
         query: req.body.query,
         context: req.context,
-        res: this.resToResultFn(res)
+        res: this.resToResultFn(res),
+        httpMethod: req.method,
       });
     }));
 
@@ -516,12 +548,14 @@ class ApiGateway {
             context: req.context,
             res: this.resToResultFn(res),
             onlyViews,
+            httpMethod: req.method,
           });
         } else {
           await this.meta({
             context: req.context,
             res: this.resToResultFn(res),
             onlyViews,
+            httpMethod: req.method,
           });
         }
       })
@@ -626,7 +660,8 @@ class ApiGateway {
         await this.runScheduledRefresh({
           queryingOptions: req.query.queryingOptions,
           context: req.context,
-          res: this.resToResultFn(res)
+          res: this.resToResultFn(res),
+          httpMethod: req.method,
         });
       })
     );
@@ -754,12 +789,16 @@ class ApiGateway {
     return requestStarted && (new Date().getTime() - requestStarted.getTime());
   }
 
-  public async runScheduledRefresh({ context, res, queryingOptions }: {
+  public async runScheduledRefresh({ context, res, queryingOptions, httpMethod }: {
     context: RequestContext,
     res: ResponseResultFn,
-    queryingOptions: any
+    queryingOptions: any,
+    httpMethod?: string,
   }) {
     const requestStarted = new Date();
+    const method = resolveMethod(httpMethod, context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
+    let failure: { e: unknown } | undefined;
 
     try {
       await this.assertApiScope('jobs', context.securityContext);
@@ -771,9 +810,178 @@ class ApiGateway {
         isJob: true,
       }));
     } catch (e: any) {
+      failure = { e };
       this.handleError({
-        e, context, res, requestStarted
+        e, context, res, requestStarted, completionLogged: !isSqlApiInternal(method),
       });
+    } finally {
+      releaseInFlight();
+      this.recordCompletion({
+        context,
+        endpoint: 'run-scheduled-refresh',
+        method,
+        startedAt: requestStarted,
+      }, failure);
+    }
+  }
+
+  /**
+   * Marks a request as in flight, unless it is an SQL API planning call (see `isSqlApiInternal`).
+   * Returns the release function.
+   */
+  protected beginCompletion(method: string): () => void {
+    try {
+      if (isSqlApiInternal(method)) {
+        return () => undefined;
+      }
+      return this.queryCompletionLogger.begin();
+    } catch {
+      return () => undefined;
+    }
+  }
+
+  /**
+   * Records the completion line for a request. Called after the response was produced;
+   * never throws and never changes the response.
+   */
+  protected recordCompletion(input: Omit<CompletionInput, 'status' | 'error'>, failure?: { e: unknown }) {
+    try {
+      if (isSqlApiInternal(input.method)) {
+        return;
+      }
+
+      // A query string (GET) is parsed only when a line is actually written: the metrics do
+      // not need the query, and most successful requests write no line at the default level
+      const rawQuery = input.query;
+      const completion: Omit<CompletionInput, 'status' | 'error'> = typeof rawQuery === 'string'
+        ? { ...input, query: undefined, resolveQuery: () => this.queryForLog(rawQuery) }
+        : input;
+
+      if (!failure) {
+        this.queryCompletionLogger.record({ ...completion, status: 200 });
+        return;
+      }
+
+      const { e } = failure;
+      if (typeof e === 'object' && e !== null) {
+        this.completionRecordedErrors.add(e);
+      }
+      const { status, error } = describeFailure(e);
+      this.queryCompletionLogger.record({ ...completion, status, error });
+    } catch {
+      // logging must never break a request
+    }
+  }
+
+  /**
+   * The query as the completion line should see it: a query string (GET, or a failure before
+   * parsing) is parsed for logging only. Never throws.
+   */
+  // parseQueryParam accepts the raw string at runtime; its type only lists parsed shapes
+  private queryForLog(query: unknown): { query?: unknown, queryUnparsable?: boolean } {
+    if (typeof query !== 'string') {
+      return { query };
+    }
+    if (!query || query === 'undefined') {
+      return { query: undefined };
+    }
+    try {
+      return { query: this.parseQueryParam(query as unknown as RequestQuery) };
+    } catch {
+      return { query: undefined, queryUnparsable: true };
+    }
+  }
+
+  /**
+   * A copy of the client's query for the completion line, taken before normalisation, which
+   * adds top-level keys (cacheMode, timezone) to the query object in place. Shallow on purpose:
+   * normalisation only touches top-level keys. Never throws.
+   */
+  private snapshotQueryForLog(query: unknown): unknown {
+    try {
+      if (Array.isArray(query)) {
+        return query.map((q) => (q && typeof q === 'object' && !Array.isArray(q) ? { ...q } : q));
+      }
+      if (query && typeof query === 'object') {
+        return { ...query };
+      }
+      return query;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Records the completion line for a REST request that failed before (or outside of) the
+   * endpoint method, e.g. in authentication or context creation. Returns whether a completion
+   * line covers the request. Never throws.
+   */
+  protected recordEarlyFailure(req: Request, e: unknown, status?: number): boolean {
+    try {
+      return this.recordRequestFailure({
+        context: req.context || { requestId: this.requestIdForLog(req) },
+        endpoint: endpointForPath(req.path, this.basePath),
+        method: resolveMethod(req.method, undefined),
+        startedAt: req.requestStarted,
+        e,
+        status,
+      });
+    } catch {
+      // logging must never break a request
+      return false;
+    }
+  }
+
+  /**
+   * The client's request id (x-request-id / traceparent) for a request that failed before its
+   * context was built; undefined when it sent none or an invalid one.
+   */
+  private requestIdForLog(req: Request): string | undefined {
+    try {
+      if (!req.get('x-request-id') && !req.get('traceparent')) {
+        return undefined;
+      }
+      return getRequestIdFromRequest(req);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Records the completion line for a request that failed before its endpoint method ran
+   * (REST middleware, WebSocket message handling). Skips requests whose endpoint is not
+   * logged and errors an endpoint method already recorded. Returns whether a completion line
+   * covers the request (recorded now or by the endpoint method), for `completionLogged`.
+   * Never throws.
+   */
+  public recordRequestFailure({ context, endpoint, method, startedAt, e, status }: {
+    context?: Partial<RequestContext>,
+    endpoint?: Endpoint,
+    method: string,
+    startedAt?: Date,
+    e: unknown,
+    status?: number,
+  }): boolean {
+    try {
+      if (typeof e === 'object' && e !== null && this.completionRecordedErrors.has(e)) {
+        return true;
+      }
+      if (!endpoint) {
+        return false;
+      }
+      const described = describeFailure(e);
+      this.queryCompletionLogger.record({
+        context: context || {},
+        endpoint,
+        method,
+        status: status ?? described.status,
+        startedAt: startedAt || new Date(),
+        error: described.error,
+      });
+      return true;
+    } catch {
+      // logging must never break a request
+      return false;
     }
   }
 
@@ -827,14 +1035,19 @@ class ApiGateway {
     };
   }
 
-  public async meta({ context, res, includeCompilerId, onlyCompilerId, onlyViews }: {
+  public async meta({ context, res, includeCompilerId, onlyCompilerId, onlyViews, apiType, httpMethod }: {
     context: RequestContext,
     res: MetaResponseResultFn,
     includeCompilerId?: boolean,
     onlyCompilerId?: boolean,
     onlyViews?: boolean,
+    apiType?: string,
+    httpMethod?: string,
   }) {
     const requestStarted = new Date();
+    const method = resolveMethod(httpMethod, apiType ?? context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
+    let failure: { e: unknown } | undefined;
 
     try {
       await this.assertApiScope('meta', context.securityContext);
@@ -869,22 +1082,37 @@ class ApiGateway {
       }
       res(response);
     } catch (e: any) {
+      failure = { e };
       this.handleError({
         e,
         context,
         // @ts-ignore
         res,
         requestStarted,
+        completionLogged: !isSqlApiInternal(method),
       });
+    } finally {
+      releaseInFlight();
+      this.recordCompletion({
+        context,
+        endpoint: 'meta',
+        method,
+        startedAt: requestStarted,
+      }, failure);
     }
   }
 
-  public async metaExtended({ context, res, onlyViews }: {
+  public async metaExtended({ context, res, onlyViews, apiType, httpMethod }: {
     context: ExtendedRequestContext,
     res: ResponseResultFn,
     onlyViews?: boolean,
+    apiType?: string,
+    httpMethod?: string,
   }) {
     const requestStarted = new Date();
+    const method = resolveMethod(httpMethod, apiType ?? context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
+    let failure: { e: unknown } | undefined;
 
     try {
       await this.assertApiScope('meta', context.securityContext);
@@ -916,12 +1144,22 @@ class ApiGateway {
 
       await res({ cubes });
     } catch (e: any) {
+      failure = { e };
       this.handleError({
         e,
         context,
         res,
         requestStarted,
+        completionLogged: !isSqlApiInternal(method),
       });
+    } finally {
+      releaseInFlight();
+      this.recordCompletion({
+        context,
+        endpoint: 'meta',
+        method,
+        startedAt: requestStarted,
+      }, failure);
     }
   }
 
@@ -1670,14 +1908,22 @@ class ApiGateway {
     expressionParams,
     disableExternalPreAggregations,
     disableLimitEnforcing,
+    apiType,
+    httpMethod,
   }: QueryRequest) {
     const requestStarted = new Date();
+    const method = resolveMethod(httpMethod, apiType ?? context?.apiType);
+    const releaseInFlight = this.beginCompletion(method);
+    const queryForLog = this.snapshotQueryForLog(query);
+    let failure: { e: unknown } | undefined;
+    let normalizedQueryType: string | undefined;
 
     try {
       await this.assertApiScope('sql', context.securityContext);
 
       const [queryType, normalizedQueries] =
         await this.getNormalizedQueries(query, context, disableLimitEnforcing, memberExpressions);
+      normalizedQueryType = queryType;
 
       const sqlQueries = await Promise.all<any>(
         normalizedQueries.map(async (normalizedQuery) => (await this.getCompilerApi(context)).getSql(
@@ -1699,9 +1945,20 @@ class ApiGateway {
         { sql: toQuery(sqlQueries[0]), dataSource: sqlQueries[0].dataSource } :
         sqlQueries.map((sqlQuery) => ({ sql: toQuery(sqlQuery), dataSource: sqlQuery.dataSource })));
     } catch (e: any) {
+      failure = { e };
       this.handleError({
-        e, context, query, res, requestStarted
+        e, context, query, res, requestStarted, completionLogged: !isSqlApiInternal(method),
       });
+    } finally {
+      releaseInFlight();
+      this.recordCompletion({
+        context,
+        endpoint: 'sql',
+        method,
+        startedAt: requestStarted,
+        query: queryForLog,
+        queryType: normalizedQueryType,
+      }, failure);
     }
   }
 
@@ -2219,9 +2476,16 @@ class ApiGateway {
       res,
       apiType = 'rest',
       cacheMode,
+      httpMethod,
       ...props
     } = request;
     const requestStarted = new Date();
+    const method = resolveMethod(httpMethod, apiType);
+    const releaseInFlight = this.beginCompletion(method);
+    const queryForLog = this.snapshotQueryForLog(request.query);
+    let failure: { e: unknown } | undefined;
+    let normalizedQueryType: string | undefined;
+    let slowQuery = false;
 
     try {
       await this.assertApiScope('data', context.securityContext);
@@ -2241,6 +2505,7 @@ class ApiGateway {
 
       const [queryType, normalizedQueries] =
         await this.getNormalizedQueries(query, context, false, false, cacheMode);
+      normalizedQueryType = queryType;
 
       if (
         queryType !== QueryTypeEnum.REGULAR_QUERY &&
@@ -2261,8 +2526,6 @@ class ApiGateway {
       metaConfigResult = this.filterVisibleItemsInMeta(context, metaConfigResult);
 
       const sqlQueries = await this.getSqlQueriesInternal(context, normalizedQueries);
-
-      let slowQuery = false;
 
       const results = await Promise.all(
         normalizedQueries.map(async (normalizedQuery, index) => {
@@ -2333,9 +2596,23 @@ class ApiGateway {
         await res(results[0]);
       }
     } catch (e: any) {
+      failure = { e };
       this.handleError({
-        e, context, query, res, requestStarted
+        e, context, query, res, requestStarted, completionLogged: !isSqlApiInternal(method),
       });
+    } finally {
+      releaseInFlight();
+      // A WS message arrives here with `apiType: 'ws'`, each subscription refresh is its own call
+      this.recordCompletion({
+        context,
+        endpoint: 'load',
+        method,
+        startedAt: requestStarted,
+        query: queryForLog,
+        queryType: normalizedQueryType,
+        cacheMode,
+        slowQuery,
+      }, failure);
     }
   }
 
@@ -2605,11 +2882,14 @@ class ApiGateway {
   }
 
   protected handleErrorMiddleware: ErrorRequestHandler = async (e, req: Request, res, next) => {
+    // Recorded first, so handleError knows whether a completion line covers the request
+    const completionLogged = this.recordEarlyFailure(req, e);
     this.handleError({
       e,
       context: (<any>req).context,
       res: this.resToResultFn(res),
       requestStarted: req.requestStarted || new Date(),
+      completionLogged,
     });
 
     next(e);
@@ -2634,44 +2914,56 @@ class ApiGateway {
   }
 
   public handleError({
-    e, context, query, redactedQuery, res, requestStarted
+    e, context, query, redactedQuery, res, requestStarted, completionLogged,
   }: HandleErrorOptions) {
     const requestId = this.devServer || context?.signedWithPlaygroundAuthSecret ? context?.requestId : undefined;
     const stack = this.devServer ? e.stack : undefined;
 
     const plainError = e.plainMessages;
+    // The detailed events below carry the query, the raw error and (via `log`) the whole
+    // securityContext: they are debug. The default-level trace of the failure is the request's
+    // completion line or, when there is none, `cube.error` (see `completionLogged`)
     const loggedQuery = {
       query: this.sanitizeQueryForLogging(query),
       ...(redactedQuery ? { redactedQuery } : {}),
     };
 
+    let status: number;
     if (e instanceof CubejsHandlerError) {
+      status = e.status;
       this.log({
         type: e.type,
+        level: 'debug',
         ...loggedQuery,
         error: e.message,
         duration: this.duration(requestStarted)
       }, context);
       res({ error: e.message, stack, requestId, plainError }, { status: e.status });
     } else if (e.error === 'Continue wait') {
+      status = 200;
       this.log({
         type: 'Continue wait',
+        level: 'debug',
         ...loggedQuery,
         error: e.message,
         duration: this.duration(requestStarted),
       }, context);
       res({ error: e.message || e.error.message || e.error.toString(), requestId }, { status: 200 });
     } else if (e.error) {
+      status = 400;
       this.log({
         type: 'Orchestrator error',
+        level: 'debug',
         ...loggedQuery,
         error: e.error,
         duration: this.duration(requestStarted),
       }, context);
       res({ error: e.message || e.error.message || e.error.toString(), requestId }, { status: 400 });
     } else if (e.type === 'UserError') {
+      status = 400;
       this.log({
         type: e.type,
+        level: 'debug',
         ...loggedQuery,
         error: e.message,
         duration: this.duration(requestStarted)
@@ -2687,14 +2979,37 @@ class ApiGateway {
         { status: 400 }
       );
     } else {
+      status = 500;
       this.log({
         type: 'Internal Server Error',
+        level: 'debug',
         query,
         ...(redactedQuery ? { redactedQuery } : {}),
         error: stack || e.toString(),
         duration: this.duration(requestStarted)
       }, context);
       res({ error: e.toString(), stack, requestId, plainError, }, { status: 500 });
+    }
+
+    if (!completionLogged) {
+      this.recordErrorEvent(e, status, context, query);
+    }
+  }
+
+  /**
+   * The `cube.error` line of a failed request no completion line covers. Never throws.
+   */
+  private recordErrorEvent(e: unknown, status: number, context: Partial<RequestContext> | undefined, query: unknown) {
+    try {
+      const { error } = describeFailure(e);
+      this.queryCompletionLogger.recordError({
+        context,
+        status,
+        error,
+        ...this.queryForLog(query),
+      });
+    } catch {
+      // logging must never break a request
     }
   }
 
@@ -2997,19 +3312,20 @@ class ApiGateway {
       if (e instanceof CubejsHandlerError) {
         const error = e.originalError || e;
         const stack = this.devServer ? error.stack : undefined;
+        // Neither the token nor the query string (it carries the query and its filter values)
         this.log({
           type: error.message,
-          url: req.url,
-          token,
+          url: req.path,
           error: stack || error.toString()
         }, <any>req);
 
         res.status(e.status).json({ error: e.message });
+        this.recordEarlyFailure(req, e);
       } else if (e instanceof Error) {
         const stack = this.devServer ? e.stack : undefined;
         this.log({
           type: 'Auth Error',
-          token,
+          url: req.path,
           error: stack || e.toString()
         }, <any>req);
 
@@ -3017,6 +3333,7 @@ class ApiGateway {
           error: e.toString(),
           stack,
         });
+        this.recordEarlyFailure(req, e, 500);
       }
     }
   }
@@ -3045,11 +3362,11 @@ class ApiGateway {
     }
   };
 
-  protected requestLogger: RequestHandler = async (req: Request, res: ExpressResponse, next: NextFunction) => {
-    const details = requestParser(req, res);
-
-    this.log({ type: 'REST API Request', ...details }, req.context);
-
+  /**
+   * Default for the `requestLoggerMiddleware` slot. It no longer logs: every data, sql and meta
+   * request emits one `cube.query.completed` line on completion instead.
+   */
+  protected requestLogger: RequestHandler = async (_req: Request, _res: ExpressResponse, next: NextFunction) => {
     if (next) {
       next();
     }

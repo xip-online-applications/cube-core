@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { getEnv, getProcessUid, LoggerFn, extractRequestUUID } from '@cubejs-backend/shared';
+import { getEnv, getPodName, getProcessUid, LoggerFn, extractRequestUUID, queryExecutionTracker } from '@cubejs-backend/shared';
 import {
   QueueDriverInterface,
   QueryKey,
@@ -713,6 +713,15 @@ export class QueryQueue {
     return undefined;
   }
 
+  private recordExecution(requestId: string | undefined, timeInQueue: unknown, duration: unknown) {
+    try {
+      const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      queryExecutionTracker.record(requestId, { queueWaitMs: n(timeInQueue), execMs: n(duration) });
+    } catch {
+      // tracking must never affect query execution
+    }
+  }
+
   /**
    * Execute query without adding it to the queue.
    */
@@ -750,6 +759,7 @@ export class QueryQueue {
         requestId: query.requestId,
         timeInQueue: 0
       });
+      this.recordExecution(query.requestId, 0, (new Date()).getTime() - startQueryTime);
     } catch (e: any) {
       executionResult = {
         error: (e.message || e).toString() // TODO error handling
@@ -871,6 +881,7 @@ export class QueryQueue {
       const tenantIdentifier = query.tenantId || 'unknown';
 
       Tracer.init().get().timing('time_in_queue', timeInQueue, {
+        pod: getPodName(),
         tenant: tenantIdentifier,
       });
 
@@ -1013,6 +1024,7 @@ export class QueryQueue {
         const duration = (new Date()).getTime() - startQueryTime;
 
         Tracer.init().get().timing('query_duration', duration, {
+          pod: getPodName(),
           tenant: tenantIdentifier,
         });
 
@@ -1030,6 +1042,7 @@ export class QueryQueue {
           preAggregation: query.query?.preAggregation,
           addedToQueueTime: query.addedToQueueTime,
         });
+        this.recordExecution(query.requestId, timeInQueue, duration);
       } catch (e: any) {
         executionResult = {
           error: (e.message || e).toString() // TODO error handling
