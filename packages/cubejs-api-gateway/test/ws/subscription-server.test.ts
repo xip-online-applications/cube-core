@@ -617,6 +617,33 @@ describe('SubscriptionServer', () => {
       expect(await store.getSubscription('c1', 'm1')).toBeDefined();
     });
 
+    // A disconnect (e.g. the keepalive terminating a dead connection) while a poll is in flight: the late
+    // subscribe() re-creates the connection without an auth context. The next poll cycle must clean it up
+    // quietly instead of answering 'Not authorized' (403) and recording an error every 5 s until eviction
+    it('a late subscribe() after a disconnect does not leave a zombie that answers 403s', async () => {
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>(r => { release = r; });
+      const { server, store, mockApiGateway, mockSendMessage } = setup(async (args: any) => {
+        await gate;
+        await args.subscribe({ result: 1 });
+      });
+      mockApiGateway.recordRequestFailure = jest.fn();
+      await server.processMessage('c1', JSON.stringify({ authorization: 't' }));
+
+      const pending = server.processMessage('c1', JSON.stringify({ method: 'subscribe', messageId: 'm1', params: { query: {} } }));
+      await new Promise(r => setImmediate(r));
+      await server.disconnect('c1');
+      release();
+      await pending;
+
+      await server.processSubscriptions();
+      await server.processSubscriptions();
+
+      expect(mockSendMessage.mock.calls.filter(c => c[1]?.status === 403)).toHaveLength(0);
+      expect(mockApiGateway.recordRequestFailure).not.toHaveBeenCalled();
+      expect(store.getAllSubscriptions()).toHaveLength(0);
+    });
+
     it('renewCubes records the renew on the store and writes nothing via console', async () => {
       const { server, store } = setup();
       await store.setAuthContext('c1', { securityContext: { tenantId: 't1' } });

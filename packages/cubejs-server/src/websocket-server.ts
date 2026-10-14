@@ -1,20 +1,33 @@
 import WebSocket from 'ws';
 import crypto from 'crypto';
 import util from 'util';
-import { CancelableInterval, createCancelableInterval, getEnv } from '@cubejs-backend/shared';
+import {
+  CancelableInterval,
+  createCancelableInterval,
+  emitLogRateLimited,
+  getEnv,
+  getPodName,
+} from '@cubejs-backend/shared';
+import { Tracer } from '@cubejs-backend/tracer';
 
 import type { CubejsServerCore } from '@cubejs-backend/server-core';
 import type http from 'http';
 import type https from 'https';
 import { SubscriptionServer } from '@cubejs-backend/api-gateway';
 
+import { WebSocketKeepAlive } from './ws-keepalive';
+
 export interface WebSocketServerOptions {
   processSubscriptionsInterval?: number,
   webSocketsBasePath?: string,
+  // Seconds between pings, 0 disables the keepalive; defaults to CUBEJS_WEB_SOCKETS_PING_INTERVAL
+  webSocketsPingInterval?: number,
 }
 
 export class WebSocketServer {
   protected subscriptionsTimer: CancelableInterval | null = null;
+
+  protected keepAlive: WebSocketKeepAlive | null = null;
 
   protected wsServer: WebSocket.Server | null = null;
 
@@ -34,9 +47,35 @@ export class WebSocketServer {
 
     const connectionIdToSocket: Record<string, any> = {};
 
+    const pingSeconds = this.options.webSocketsPingInterval ?? getEnv('webSocketsPingInterval');
+    this.keepAlive = pingSeconds > 0
+      ? new WebSocketKeepAlive({
+        intervalMs: pingSeconds * 1000,
+        onTerminate: (connectionId) => {
+          try {
+            Tracer.init().get().increment('ws.connections_terminated', 1, { pod: getPodName() });
+          } catch {
+            // metrics must never break the keepalive
+          }
+
+          emitLogRateLimited('ws.connection_terminated', 60_000, 'info', 'cube.ws.connection_terminated', { connectionId });
+        },
+        onTick: (connectionCount) => {
+          try {
+            Tracer.init().get().gauge('ws.connections', connectionCount, { pod: getPodName() });
+          } catch {
+            // metrics must never break the keepalive
+          }
+        },
+      })
+      : null;
+
     this.subscriptionServer = this.serverCore.initSubscriptionServer(async (connectionId: string, message: any) => {
-      if (!connectionIdToSocket[connectionId]) {
-        throw new Error(`Socket for ${connectionId} is not found found`);
+      const socket = connectionIdToSocket[connectionId];
+      // The connection is gone (closed or terminated by the keepalive): late results of in-flight
+      // polls are dropped instead of raising errors
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return;
       }
 
       let messageStr: string;
@@ -58,22 +97,25 @@ export class WebSocketServer {
         messageStr = JSON.stringify(message);
       }
 
-      connectionIdToSocket[connectionId].send(messageStr);
+      socket.send(messageStr);
     });
 
     this.wsServer.on('connection', (ws) => {
       const connectionId = crypto.randomBytes(8).toString('hex');
       connectionIdToSocket[connectionId] = ws;
+      this.keepAlive?.add(ws, connectionId);
 
       ws.on('message', async (message) => {
         await this.subscriptionServer!.processMessage(connectionId, message as string);
       });
 
       ws.on('close', async () => {
+        delete connectionIdToSocket[connectionId];
         await this.subscriptionServer!.disconnect(connectionId);
       });
 
       ws.on('error', async () => {
+        delete connectionIdToSocket[connectionId];
         await this.subscriptionServer!.disconnect(connectionId);
       });
     });
@@ -97,6 +139,8 @@ export class WebSocketServer {
     if (this.subscriptionsTimer) {
       await this.subscriptionsTimer.cancel();
     }
+
+    this.keepAlive?.close();
 
     if (this.wsServer) {
       const close = util.promisify(this.wsServer.close.bind(this.wsServer));
