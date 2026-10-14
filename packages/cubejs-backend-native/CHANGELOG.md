@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.6](https://github.com/cube-js/cube/compare/v1.8.5...v1.8.6) (2026-10-13)
+
+**Note:** Version bump only for package @cubejs-backend/native
+
+## [1.8.5](https://github.com/cube-js/cube/compare/v1.8.4...v1.8.5) (2026-10-13)
+
+**Note:** Version bump only for package @cubejs-backend/native
+
+## [1.8.4](https://github.com/cube-js/cube/compare/v1.8.3...v1.8.4) (2026-10-12)
+
+**Note:** Version bump only for package @cubejs-backend/native
+
+## [1.8.3](https://github.com/cube-js/cube/compare/v1.8.2...v1.8.3) (2026-10-10)
+
+### Features
+
+- **tesseract:** Add an opt-in UNION ALL combine for multi-stage results on Cube Store ([#12182](https://github.com/cube-js/cube/issues/12182)) ([67d7d74](https://github.com/cube-js/cube/commit/67d7d74584f13d8789622afe8053ff4e5a034773))
+- **tesseract:** Fold windowed multi-stage measures into one rollup scan ([#12189](https://github.com/cube-js/cube/issues/12189)) ([b162d11](https://github.com/cube-js/cube/commit/b162d11cc48a681b77c6d9cb9e957662bfa06251)), closes [#12183](https://github.com/cube-js/cube/issues/12183) [#12182](https://github.com/cube-js/cube/issues/12182) [#12183](https://github.com/cube-js/cube/issues/12183)
+
+### Performance Improvements
+
+- **native:** Cut N-API round-trips in NativeSerdeDeserializer ([#12170](https://github.com/cube-js/cube/issues/12170)) ([7f6d197](https://github.com/cube-js/cube/commit/7f6d1977cedaf1a84dff9119bb52297e23c56065))
+
+## [1.8.2](https://github.com/cube-js/cube/compare/v1.8.1...v1.8.2) (2026-10-08)
+
+### Performance Improvements
+
+- **native:** Speed up NativeSerdeDeserializer ([#12155](https://github.com/cube-js/cube/issues/12155)) ([22fc5eb](https://github.com/cube-js/cube/commit/22fc5eb8037d7b5928dedc7ad2ee11c63902d40f))
+
 ## [1.8.1](https://github.com/cube-js/cube/compare/v1.8.0...v1.8.1) (2026-10-07)
 
 **Note:** Version bump only for package @cubejs-backend/native

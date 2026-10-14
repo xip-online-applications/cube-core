@@ -13,7 +13,7 @@ use crate::cube_bridge::base_query_options::FilterValue;
 use crate::logical_plan::LogicalSubqueryJoinItem;
 use crate::planner::collectors::{collect_multiplied_measures, has_multi_stage_members};
 use crate::planner::filter::tree_ops;
-use crate::planner::filter::{Filter, FilterGroup, FilterItem, FilterOperator};
+use crate::planner::filter::{BaseFilter, Filter, FilterGroup, FilterItem, FilterOperator};
 use crate::planner::join_hints::JoinHints;
 use crate::planner::multi_fact_join_groups::{MeasuresJoinHints, MultiFactJoinGroups};
 use crate::planner::planners::multi_stage::{
@@ -175,6 +175,12 @@ pub struct QueryProperties {
     use_original_sql_pre_aggregations_in_pre_aggregation: bool,
     #[builder(default)]
     total_query: bool,
+    /// Folds multi-stage leaves that read one rollup under different filters into one scan.
+    #[builder(default = true)]
+    multi_stage_leaf_merge: bool,
+    /// Lets Cube Store combine multi-stage results with `UNION ALL` instead of joins.
+    #[builder(default = true)]
+    cubestore_union_full_key_aggregate: bool,
     /// Multi-stage members one dependency path may carry before planning refuses the query.
     #[builder(default = DEFAULT_MAX_MULTI_STAGE_DEPTH)]
     max_multi_stage_depth: usize,
@@ -363,6 +369,14 @@ impl QueryProperties {
 
     pub fn is_total_query(&self) -> bool {
         self.total_query
+    }
+
+    pub fn multi_stage_leaf_merge(&self) -> bool {
+        self.multi_stage_leaf_merge
+    }
+
+    pub fn cubestore_union_full_key_aggregate(&self) -> bool {
+        self.cubestore_union_full_key_aggregate
     }
 
     fn extract_dimensions_from_order(&self) -> Vec<Rc<MemberSymbol>> {
@@ -1115,6 +1129,32 @@ impl QueryProperties {
         Ok(())
     }
 
+    /// Rewrites the bounds of one top-level `InDateRange` filter, leaving any
+    /// other date range on the same member as it is.
+    pub fn replace_bounds_of_date_filter(
+        &mut self,
+        filter: &Rc<BaseFilter>,
+        new_from: String,
+        new_to: String,
+    ) -> Result<(), CubeError> {
+        for item in self.time_dimensions_filters.iter_mut() {
+            if let FilterItem::Item(itm) = item {
+                if Rc::ptr_eq(itm, filter) {
+                    *itm = itm.change_operator(
+                        FilterOperator::InDateRange,
+                        vec![FilterValue::Str(new_from), FilterValue::Str(new_to)],
+                        itm.use_raw_values(),
+                        self.query_tools.query_tools().clone(),
+                        None,
+                    )?;
+                    break;
+                }
+            }
+        }
+        self.invalidate_join_groups_cache();
+        Ok(())
+    }
+
     /// Same as [`replace_range_in_date_filter`](Self::replace_range_in_date_filter)
     /// but forces the rewritten filter to use raw (unparametrized) values.
     pub fn replace_range_to_subquery_in_date_filter(
@@ -1253,6 +1293,8 @@ impl PartialEq for QueryProperties {
             pre_aggregations_match_only,
             use_original_sql_pre_aggregations_in_pre_aggregation,
             total_query,
+            multi_stage_leaf_merge,
+            cubestore_union_full_key_aggregate,
             // A server-side safety budget, not something the query asks for: two requests that
             // differ only in it render the same SQL, or one of them is refused outright.
             max_multi_stage_depth: _,
@@ -1285,6 +1327,8 @@ impl PartialEq for QueryProperties {
             && *use_original_sql_pre_aggregations_in_pre_aggregation
                 == other.use_original_sql_pre_aggregations_in_pre_aggregation
             && *total_query == other.total_query
+            && *multi_stage_leaf_merge == other.multi_stage_leaf_merge
+            && *cubestore_union_full_key_aggregate == other.cubestore_union_full_key_aggregate
             && *allow_multi_stage == other.allow_multi_stage
             && *disable_external_pre_aggregations == other.disable_external_pre_aggregations
             && *pre_aggregation_id == other.pre_aggregation_id

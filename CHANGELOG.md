@@ -3,6 +3,78 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.6](https://github.com/cube-js/cube/compare/v1.8.5...v1.8.6) (2026-10-13)
+
+### Bug Fixes
+
+- **schema-compiler:** Stop rollupJoin and rollupLambda from leaking memory through memoized references ([#12248](https://github.com/cube-js/cube/issues/12248)) ([0b90fd3](https://github.com/cube-js/cube/commit/0b90fd303d44e11cd431100680ab2e7e20997ff2))
+
+## [1.8.5](https://github.com/cube-js/cube/compare/v1.8.4...v1.8.5) (2026-10-13)
+
+### Bug Fixes
+
+- **cubesql:** Never render an empty alias for wrapped subqueries ([#12239](https://github.com/cube-js/cube/issues/12239)) ([c50979a](https://github.com/cube-js/cube/commit/c50979aeab49aa0b712355f681d8e62e67d9fae7))
+- **cubesql:** Prune unused members from inner wrapped select ([#11972](https://github.com/cube-js/cube/issues/11972)) ([a3da378](https://github.com/cube-js/cube/commit/a3da378c23550fee9e08526a3e3d08c2edeaa264))
+- **cubesql:** Push down joins between grouped subqueries ([#11584](https://github.com/cube-js/cube/issues/11584)) ([acc203b](https://github.com/cube-js/cube/commit/acc203b532755de57ed0f2ac2cbc2b7690ad9e33))
+- **databricks-jdbc-driver:** Cast time dimension values in equals and in filters ([#12158](https://github.com/cube-js/cube/issues/12158)) ([7a59cb8](https://github.com/cube-js/cube/commit/7a59cb8b4a2b72288fd6e630066a9ddef8b225c1))
+- **databricks-jdbc-driver:** Treat unparseable time values as not set in IN filters ([#12234](https://github.com/cube-js/cube/issues/12234)) ([5030576](https://github.com/cube-js/cube/commit/5030576e958e724946926bfd2851fb05acbdce6b))
+
+### Features
+
+- **server-core:** Add CUBEJS_SCHEDULED_REFRESH_TIMER_INTERVAL_ONLY so a numeric scheduledRefreshTimer doesn't enable the refresh worker ([#12107](https://github.com/cube-js/cube/issues/12107)) ([d0ccad7](https://github.com/cube-js/cube/commit/d0ccad76faddeaf08b762ce044f5d5b1b264a8b2))
+
+### Performance Improvements
+
+- **schema-compiler:** Match pre-aggregations once per getSql call ([#12159](https://github.com/cube-js/cube/issues/12159)) ([528e8c5](https://github.com/cube-js/cube/commit/528e8c5f7c2d3220a62f7e439903fb18b6d8d807))
+
+## [1.8.4](https://github.com/cube-js/cube/compare/v1.8.3...v1.8.4) (2026-10-12)
+
+### Bug Fixes
+
+- **api-gateway:** Guard member-expression SQL eval against JS injection ([#12207](https://github.com/cube-js/cube/issues/12207)) ([3c09976](https://github.com/cube-js/cube/commit/3c09976522024961fa43afac958b9dad348ee40b))
+- **client:** Fix stale useCubeQuery state, missed dry runs and dropped granularity ([#12217](https://github.com/cube-js/cube/issues/12217)) ([7a67afb](https://github.com/cube-js/cube/commit/7a67afbe17b10f25c2342215db7fa21c9df1bb03)), closes [#3473](https://github.com/cube-js/cube/issues/3473) [#3552](https://github.com/cube-js/cube/issues/3552) [#12204](https://github.com/cube-js/cube/issues/12204) [#5289](https://github.com/cube-js/cube/issues/5289) [#9985](https://github.com/cube-js/cube/issues/9985) [#7379](https://github.com/cube-js/cube/issues/7379) [#3473](https://github.com/cube-js/cube/issues/3473) [#3552](https://github.com/cube-js/cube/issues/3552) [#5289](https://github.com/cube-js/cube/issues/5289) [#9985](https://github.com/cube-js/cube/issues/9985) [#7379](https://github.com/cube-js/cube/issues/7379)
+- **cubestore:** Don't widen decimal sums twice in full-merge top-k ([#12188](https://github.com/cube-js/cube/issues/12188)) ([31edcf4](https://github.com/cube-js/cube/commit/31edcf42ae99430767637b74872836b9134f139a))
+
+### Features
+
+- **cube-cli:** Manage custom roles from the CLI (CUB-4361) ([#11894](https://github.com/cube-js/cube/issues/11894)) ([46e7928](https://github.com/cube-js/cube/commit/46e7928b411533413c35e3be367c0e5fb5be57a9)), closes [cubedevinc/cubejs-enterprise#15056](https://github.com/cubedevinc/cubejs-enterprise/issues/15056)
+- **tesseract:** Enable multi-stage leaf merge and union by default ([#12220](https://github.com/cube-js/cube/issues/12220)) ([c1367cf](https://github.com/cube-js/cube/commit/c1367cf6dbe4027568a73f48fca39d60a5a10ad1)), closes [#12182](https://github.com/cube-js/cube/issues/12182) [#10268](https://github.com/cube-js/cube/issues/10268) [#12182](https://github.com/cube-js/cube/issues/12182)
+
+## [1.8.3](https://github.com/cube-js/cube/compare/v1.8.2...v1.8.3) (2026-10-10)
+
+### Bug Fixes
+
+- **bigquery-driver:** Align DOW numbering for SQL API, thanks [@tlangton3](https://github.com/tlangton3) ([#10678](https://github.com/cube-js/cube/issues/10678)) ([2f951c1](https://github.com/cube-js/cube/commit/2f951c188d44e84361c4f5664e3eb8b7ad47fd0f)), closes [#10644](https://github.com/cube-js/cube/issues/10644)
+
+### Features
+
+- **athena-driver:** Support readOnly mode with export bucket via UNLOAD ([#12196](https://github.com/cube-js/cube/issues/12196)) ([9a6f893](https://github.com/cube-js/cube/commit/9a6f893c60d3c32fd89c8be97d4ccf78b5239945))
+- **cube-cli:** Add `cube ossie` to convert Cube ⇄ Apache Ossie (CUB-5419) ([#12179](https://github.com/cube-js/cube/issues/12179)) ([1399b13](https://github.com/cube-js/cube/commit/1399b1333bf5ccb2a4389f52b3b59dfee4c02afe)), closes [#12157](https://github.com/cube-js/cube/issues/12157)
+- **tesseract:** Add an opt-in UNION ALL combine for multi-stage results on Cube Store ([#12182](https://github.com/cube-js/cube/issues/12182)) ([67d7d74](https://github.com/cube-js/cube/commit/67d7d74584f13d8789622afe8053ff4e5a034773))
+- **tesseract:** Fold windowed multi-stage measures into one rollup scan ([#12189](https://github.com/cube-js/cube/issues/12189)) ([b162d11](https://github.com/cube-js/cube/commit/b162d11cc48a681b77c6d9cb9e957662bfa06251)), closes [#12183](https://github.com/cube-js/cube/issues/12183) [#12182](https://github.com/cube-js/cube/issues/12182) [#12183](https://github.com/cube-js/cube/issues/12183)
+
+### Performance Improvements
+
+- **native:** Cut N-API round-trips in NativeSerdeDeserializer ([#12170](https://github.com/cube-js/cube/issues/12170)) ([7f6d197](https://github.com/cube-js/cube/commit/7f6d1977cedaf1a84dff9119bb52297e23c56065))
+
+## [1.8.2](https://github.com/cube-js/cube/compare/v1.8.1...v1.8.2) (2026-10-08)
+
+### Bug Fixes
+
+- **cubesql:** Keep filters above limited CubeScan ([#12071](https://github.com/cube-js/cube/issues/12071)) ([4b3b59d](https://github.com/cube-js/cube/commit/4b3b59d6c4b35c0ebb731b410851d3fa3295115f))
+- **schema-compiler:** Stop join-hint enrichment looping on a cyclic join tree ([#12149](https://github.com/cube-js/cube/issues/12149)) ([ba1736f](https://github.com/cube-js/cube/commit/ba1736fa1ceda261d3fcc97c90eaf79ad44903e0)), closes [#9696](https://github.com/cube-js/cube/issues/9696)
+- **tesseract:** Mask masked members read from pre-aggregations ([#12152](https://github.com/cube-js/cube/issues/12152)) ([bbbaea4](https://github.com/cube-js/cube/commit/bbbaea4def64939adb200aeec73143fd1ae0f627))
+
+### Features
+
+- **tesseract:** Anchor rolling windows on multi-stage include date ranges ([#12165](https://github.com/cube-js/cube/issues/12165)) ([1694da0](https://github.com/cube-js/cube/commit/1694da0ad32354d61b713fa4c5eb1497be3a7050))
+
+### Performance Improvements
+
+- **cubestore:** Speed up UNION ALL planning over rollup partitions ([#12144](https://github.com/cube-js/cube/issues/12144)) ([3404938](https://github.com/cube-js/cube/commit/34049384bf5401e41975f0eac7042f9d07ee7f08))
+- **native:** Speed up NativeSerdeDeserializer ([#12155](https://github.com/cube-js/cube/issues/12155)) ([22fc5eb](https://github.com/cube-js/cube/commit/22fc5eb8037d7b5928dedc7ad2ee11c63902d40f))
+- **tesseract:** Memoize plan SQL templates per query ([#12154](https://github.com/cube-js/cube/issues/12154)) ([264c32f](https://github.com/cube-js/cube/commit/264c32ff34935aedc18900587e7719d30a4826f1))
+
 ## [1.8.1](https://github.com/cube-js/cube/compare/v1.8.0...v1.8.1) (2026-10-07)
 
 ### Bug Fixes

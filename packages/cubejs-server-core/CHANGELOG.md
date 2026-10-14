@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.6](https://github.com/cube-js/cube/compare/v1.8.5...v1.8.6) (2026-10-13)
+
+**Note:** Version bump only for package @cubejs-backend/server-core
+
+## [1.8.5](https://github.com/cube-js/cube/compare/v1.8.4...v1.8.5) (2026-10-13)
+
+### Features
+
+- **server-core:** Add CUBEJS_SCHEDULED_REFRESH_TIMER_INTERVAL_ONLY so a numeric scheduledRefreshTimer doesn't enable the refresh worker ([#12107](https://github.com/cube-js/cube/issues/12107)) ([d0ccad7](https://github.com/cube-js/cube/commit/d0ccad76faddeaf08b762ce044f5d5b1b264a8b2))
+
+### Performance Improvements
+
+- **schema-compiler:** Match pre-aggregations once per getSql call ([#12159](https://github.com/cube-js/cube/issues/12159)) ([528e8c5](https://github.com/cube-js/cube/commit/528e8c5f7c2d3220a62f7e439903fb18b6d8d807))
+
+## [1.8.4](https://github.com/cube-js/cube/compare/v1.8.3...v1.8.4) (2026-10-12)
+
+**Note:** Version bump only for package @cubejs-backend/server-core
+
+## [1.8.3](https://github.com/cube-js/cube/compare/v1.8.2...v1.8.3) (2026-10-10)
+
+**Note:** Version bump only for package @cubejs-backend/server-core
+
+## [1.8.2](https://github.com/cube-js/cube/compare/v1.8.1...v1.8.2) (2026-10-08)
+
+### Features
+
+- **tesseract:** Anchor rolling windows on multi-stage include date ranges ([#12165](https://github.com/cube-js/cube/issues/12165)) ([1694da0](https://github.com/cube-js/cube/commit/1694da0ad32354d61b713fa4c5eb1497be3a7050))
+
 ## [1.8.1](https://github.com/cube-js/cube/compare/v1.8.0...v1.8.1) (2026-10-07)
 
 **Note:** Version bump only for package @cubejs-backend/server-core

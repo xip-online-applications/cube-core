@@ -398,7 +398,9 @@ export class QueryOrchestrator {
           return structureVersion && versionEntry.structure_version === structureVersion;
         })
         .reduce((obj, versionEntry) => {
-          if (!obj[versionEntry.table_name]) obj[versionEntry.table_name] = [];
+          if (!obj[versionEntry.table_name]) {
+            obj[versionEntry.table_name] = [];
+          }
           obj[versionEntry.table_name].push(versionEntry);
           return obj;
         }, {})
@@ -406,7 +408,9 @@ export class QueryOrchestrator {
   }
 
   public async getPreAggregationPreview(requestId: string, preAggregation: PreAggregationDescription) {
-    if (!preAggregation) return [];
+    if (!preAggregation) {
+      return [];
+    }
     const [query] = preAggregation.previewSql;
     const { external } = preAggregation;
 

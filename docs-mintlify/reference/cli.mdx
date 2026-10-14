@@ -179,9 +179,11 @@ Run `cube <command> --help` for the full options of any command.
 | `data-model` | Data model files and Git workflow: `list`, `get`, `put`, `delete`, `rename`, `file-hashes`, `branches`, `create-branch`, `delete-branch`, `enable-branch`/`disable-branch`, `dev-mode`, `commit`, `pull`, `merge`, `merge-to-default` |
 | `dbt` | dbt sync: `sync` (`--ref` or `--manifest`, `--wait`), `generate` (`--manifest`, `--out`, `--check`), `status`, `result`, `logs`, `history` (`--status`, `--trigger`), `cancel` |
 | `evals` | Agent evals: `run` (`--branch`, `--agent`, `--file`, `--wait`), `status` (`--wait`), `results` (`--first`, `--after`) |
+| `ossie` | [Apache Ossie](#apache-ossie) conversion: `export` (`--view`, `--strict-fanout`, `--from-dir`, `--wait`, `--out`), `import` (`--file`, `--dialect`, `--base-cube`, `--out`, `--check`), `status` (`--wait`), `result` (`--out`), `cancel` |
 | `environments` | Deployment environments and environment tokens |
 | `variables` | Deployment environment variables |
 | `folders`, `workbooks`, `reports`, `workspace` | Workspace content management |
+| `roles` (`role`) | Custom roles: `list`, `create` (`--name`, `--tier`, `--deployment`, `--action`), `get`, `update`, `delete`, `assign`, `unassign` — see [Scoping a role to a deployment](#scoping-a-role-to-a-deployment) |
 | `users`, `groups`, `attributes`, `policies` | Users, groups, and access control |
 | `tenant`, `notifications`, `integrations`, `oidc`, `api-keys` | Account administration |
 | `embed` | Embed sessions, tokens, embed tenants; `enable-dashboard`/`disable-dashboard` toggle signed embedding for a dashboard |
@@ -193,6 +195,52 @@ Run `cube <command> --help` for the full options of any command.
 
 List commands print tables by default; pass `--json` anywhere for raw JSON
 output, suitable for piping to `jq`.
+
+## Scoping a role to a deployment
+
+A deployment and the access to it can be provisioned in one run: `deployments
+create` returns the new deployment, and `roles create` takes its id as the
+resource a policy is scoped to.
+
+```bash
+DEPLOYMENT=$(cube deployments create --name analytics --region aws-us-east-1-2 | jq -r '.id')
+
+ROLE=$(cube roles create \
+  --name "Analytics team" \
+  --tier develop \
+  --deployment "$DEPLOYMENT" \
+  --action DeploymentRead \
+  --action SchemaRead | jq -r '.id')
+
+cube roles assign "$ROLE" 42
+```
+
+`--tier` is the [Base Role](/admin/users-and-permissions/custom-roles#base-role)
+— it sets the license tier, and a role created without one leaves its holders
+unable to use the product, with nothing saying so until they sign in. Pick a
+tier that covers the actions you grant: `view`, `explore`, or `develop`.
+
+`--deployment` and `--action` build one `Deployment` policy together, so each
+needs the other — neither is defaulted, because guessing one would grant
+something you did not ask for. Repeat either flag for several values, and pass
+`--deployment All` for every deployment in the account.
+
+For a policy the flags do not cover — several resource types at once, or global
+actions beyond the tier — pass the full `policies` array with `--data`; the
+policies the flags build are appended to it.
+
+<Warning>
+
+`roles update` sends `policies` whenever it is given `--tier`, `--deployment` or
+a `--data` carrying a `policies` key, and the API replaces the role's policies
+outright rather than merging. Adding a second deployment with `--deployment`
+alone therefore drops the tier and every other scope — read the role first and
+pass the full set with `--data`, or re-state the flags you want kept.
+
+A `--data` without a `policies` key does not send the field at all, so editing
+just the name or description leaves the role's grants untouched.
+
+</Warning>
 
 ## Changing the Cube version
 
@@ -485,6 +533,10 @@ larger `--first` returns 100 with `pageInfo.hasNextPage` set. `logs` takes no pa
 flags — one sync's timeline is one page, and each line carries the phase it belongs
 to and how long that phase took.
 
+With [Skip unchanged webhook syncs](/docs/integrations/dbt#skip-unchanged-webhook-syncs)
+enabled, webhook runs that produce no changes appear in `history` as `COMPLETED`,
+with an empty `BRANCH` column.
+
 Both need only `SchemaRead`. Durations are the server's own single-clock figure, so
 they never disagree with the run they describe. `--json` carries the rest of each
 record — the dbt ref that was synced, the phase that failed, per-phase timings and
@@ -626,6 +678,53 @@ A successful gate prunes both branches it creates: the sync branch and its perso
 cleanup commands if the connected Git provider branch should also be deleted.
 
 </Info>
+
+## Apache Ossie
+
+Convert a Cube data model to and from [Apache Ossie](/docs/integrations/apache-ossie).
+Conversion runs in Cube and changes nothing in the deployment.
+
+Export the YAML data model of the deployment's latest successful build to `ossie.yaml`:
+
+```bash
+cube ossie export DEPLOYMENT_ID --wait
+```
+
+`--view NAME` exports one view, `--out FILE` picks the output file (`-` for standard
+output), and `--from-dir .` converts your local project instead of the deployed model.
+`--from-dir` uploads only the YAML files with a top-level `cubes:` or `views:`, so
+the paths match the deployed ones when you pass the project root. `--strict-fanout`
+fails on a measure whose value a join fan-out could change instead of converting it with
+a warning; a view export does so by default, and `--strict-fanout=false` turns it off.
+
+Import an Ossie model as Cube data model files:
+
+```bash
+cube ossie import DEPLOYMENT_ID --file ossie.yaml --out .
+```
+
+Like [`dbt generate`](#generate-cubes-without-committing-them), `--out` is the root of
+your data model project, since the generated paths are project-relative
+(`model/cubes/…`). `--file -` reads the model from standard input, and `--dialect`
+picks the warehouse SQL to take from it, defaulting to the dialect of the deployment's
+data source. `--base-cube NAME` roots the generated view at that cube when the Ossie
+relationships don't determine one. `--check` compares the files with what is on disk
+instead of writing them. An import writes files in the converter's form, without comments, so
+`--check` reports hand-written files as different until your project holds imported files.
+
+Both commands print the conversion's counts and issues. They exit non-zero when the
+conversion fails, has an `ERROR` issue, or, with `--check`, finds a missing or different
+file. With `--json`, they print one document with `conversionId`, `status`, `error`,
+`outcome`, `counts`, `issues`, and `outputPath` for an export or `files` (and `differing`
+with `--check`) for an import.
+
+Without `--wait`, `export` returns a `conversionId` you can follow yourself:
+
+```bash
+cube ossie status DEPLOYMENT_ID CONVERSION_ID --wait
+cube ossie result DEPLOYMENT_ID CONVERSION_ID --out ossie.yaml
+cube ossie cancel DEPLOYMENT_ID CONVERSION_ID
+```
 
 ## Environment variables
 
