@@ -32,6 +32,7 @@ import {
   getCacheHash,
   evaluateLocalRefreshKey,
   isValidLocalRefreshKey,
+  firstLine,
 } from './utils';
 import { CacheAndQueryDriverType, MetadataOperationType } from './QueryOrchestrator';
 
@@ -1006,7 +1007,12 @@ export class QueryCache {
         if (e instanceof ContinueWaitError) {
           throw e;
         }
-        this.logger('Error fetching cache key queries', { error: e.stack || e, requestId: options.requestId });
+        // Detail at debug: the failure itself is reported by the API layer
+        this.logger('Error fetching cache key queries', {
+          level: 'debug',
+          error: firstLine(String(e.stack || e)),
+          requestId: options.requestId,
+        });
         return [];
       })
       .then(async cacheKeyQueryResults => (
@@ -1221,7 +1227,7 @@ export class QueryCache {
         });
     }).catch(e => {
       if (!(e instanceof ContinueWaitError)) {
-        ctx.log('Dropping Cache', { error: e.stack || e });
+        ctx.log('Dropping Cache', { level: 'debug', cacheKey: undefined, error: firstLine(String(e.stack || e)) });
         this.cacheDriver.remove(redisKey)
           .catch(err => this.logger('Error removing key', {
             cacheKey,

@@ -351,6 +351,24 @@ describe('QueryCompletionLogger', () => {
     });
   });
 
+  test('a user-facing 4xx failure is a warn line, an orchestrator failure an error line', () => {
+    process.env.LOG_LEVEL = 'info';
+    const logger = new QueryCompletionLogger({ slowMs: 1000 });
+    logger.record(input({
+      status: 400,
+      error: { message: 'Invalid query format', type: 'User Error', userFacing: true },
+    }));
+    logger.record(input({
+      status: 400,
+      error: { message: 'Error: relation "Documents_t_x" does not exist', type: 'OrchestratorError' },
+    }));
+    const [clientLine, serverLine] = lines();
+    expect(clientLine).toMatchObject({ level: 'warn', status: 400 });
+    expect(serverLine).toMatchObject({ level: 'error', status: 400 });
+    // The name of a missing relation is an identifier, not a data value
+    expect(serverLine.error.message).toBe('Error: relation "Documents_t_x" does not exist');
+  });
+
   test('failed scheduled refresh is an error refresh cycle event', () => {
     process.env.LOG_LEVEL = 'info';
     new QueryCompletionLogger({ slowMs: 1000 }).record(input({

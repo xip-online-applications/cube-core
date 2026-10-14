@@ -58,3 +58,12 @@ export function isValidLocalRefreshKey(descriptor?: LocalRefreshKeyDescriptor): 
     Number.isFinite(descriptor.utcOffset) &&
     Number.isFinite(descriptor.dayOffset);
 }
+
+/**
+ * The first line of an error's stack (its message), for detail log lines whose full trace
+ * adds nothing: the failure is reported once, in full, by the API layer.
+ */
+export function firstLine(text: string): string {
+  const end = text.indexOf('\n');
+  return end === -1 ? text : text.slice(0, end);
+}
