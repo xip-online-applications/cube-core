@@ -84,6 +84,7 @@ import {
 } from './interfaces';
 import { getRequestIdFromRequest } from './request-parser';
 import { UserError } from './user-error';
+import { assertSafeCompiledMemberExpression } from './member-expression-security';
 import { CubejsHandlerError } from './cubejs-handler-error';
 import { SubscriptionServer, WebSocketSendMessageFn } from './ws/subscription-server';
 import { LocalSubscriptionStore } from './ws/local-subscription-store';
@@ -2050,6 +2051,8 @@ class ApiGateway {
     }
 
     if (Array.isArray(memberExpression.expression)) {
+      // The only guard before eval: string-form and object-form members both land here.
+      assertSafeCompiledMemberExpression(memberExpression.expression);
       return {
         ...memberExpression,
         expression: Function.constructor.apply(null, memberExpression.expression),
@@ -2061,9 +2064,12 @@ class ApiGateway {
         ...memberExpression,
         expression: {
           ...memberExpression.expression,
-          addFilters: memberExpression.expression.addFilters.map(filter => ({
-            sql: Function.constructor.apply(null, filter),
-          })),
+          addFilters: memberExpression.expression.addFilters.map(filter => {
+            assertSafeCompiledMemberExpression(filter);
+            return {
+              sql: Function.constructor.apply(null, filter),
+            };
+          }),
         }
       };
     }

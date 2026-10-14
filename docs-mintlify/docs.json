@@ -21,6 +21,7 @@
             "pages": [
               "docs/introduction",
               "docs/preferences",
+              "docs/inbox",
               {
                 "group": "Getting Started",
                 "pages": [
@@ -219,6 +220,7 @@
               "docs/integrations/google-sheets",
               "docs/integrations/snowflake-semantic-views",
               "docs/integrations/databricks-metric-views",
+              "docs/integrations/apache-ossie",
               "docs/integrations/dbt",
               {
                 "group": "Semantic Layer Sync",
@@ -1053,6 +1055,19 @@
                 ]
               },
               {
+                "group": "Roles",
+                "openapi": "/api-reference/api.yaml",
+                "pages": [
+                  "GET /api/v1/roles",
+                  "POST /api/v1/roles",
+                  "GET /api/v1/roles/{roleId}",
+                  "PUT /api/v1/roles/{roleId}",
+                  "DELETE /api/v1/roles/{roleId}",
+                  "PUT /api/v1/roles/{roleId}/users/{userId}",
+                  "DELETE /api/v1/roles/{roleId}/users/{userId}"
+                ]
+              },
+              {
                 "group": "User Attributes",
                 "openapi": "/api-reference/api.yaml",
                 "pages": [
@@ -1174,6 +1189,25 @@
                 "openapi": "/api-reference/api.yaml",
                 "pages": [
                   "GET /api/v1/spec"
+                ]
+              },
+              {
+                "group": "Chat History",
+                "openapi": "/api-reference/api.yaml",
+                "pages": [
+                  "GET /api/v1/deployments/{deploymentId}/chat-history/threads",
+                  "GET /api/v1/deployments/{deploymentId}/chat-history/threads/{chatId}"
+                ]
+              },
+              {
+                "group": "Ossie Conversion",
+                "openapi": "/api-reference/api.yaml",
+                "pages": [
+                  "POST /api/v1/deployments/{deploymentId}/ossie-conversions",
+                  "GET /api/v1/deployments/{deploymentId}/ossie-conversions/{conversionId}",
+                  "DELETE /api/v1/deployments/{deploymentId}/ossie-conversions/{conversionId}",
+                  "GET /api/v1/deployments/{deploymentId}/ossie-conversions/{conversionId}/files",
+                  "GET /api/v1/deployments/{deploymentId}/ossie-conversions/{conversionId}/result"
                 ]
               },
               {

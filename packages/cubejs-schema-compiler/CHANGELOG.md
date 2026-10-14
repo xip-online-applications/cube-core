@@ -3,6 +3,48 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.6](https://github.com/cube-js/cube/compare/v1.8.5...v1.8.6) (2026-10-13)
+
+### Bug Fixes
+
+- **schema-compiler:** Stop rollupJoin and rollupLambda from leaking memory through memoized references ([#12248](https://github.com/cube-js/cube/issues/12248)) ([0b90fd3](https://github.com/cube-js/cube/commit/0b90fd303d44e11cd431100680ab2e7e20997ff2))
+
+## [1.8.5](https://github.com/cube-js/cube/compare/v1.8.4...v1.8.5) (2026-10-13)
+
+### Bug Fixes
+
+- **databricks-jdbc-driver:** Cast time dimension values in equals and in filters ([#12158](https://github.com/cube-js/cube/issues/12158)) ([7a59cb8](https://github.com/cube-js/cube/commit/7a59cb8b4a2b72288fd6e630066a9ddef8b225c1))
+
+### Performance Improvements
+
+- **schema-compiler:** Match pre-aggregations once per getSql call ([#12159](https://github.com/cube-js/cube/issues/12159)) ([528e8c5](https://github.com/cube-js/cube/commit/528e8c5f7c2d3220a62f7e439903fb18b6d8d807))
+
+## [1.8.4](https://github.com/cube-js/cube/compare/v1.8.3...v1.8.4) (2026-10-12)
+
+**Note:** Version bump only for package @cubejs-backend/schema-compiler
+
+## [1.8.3](https://github.com/cube-js/cube/compare/v1.8.2...v1.8.3) (2026-10-10)
+
+### Bug Fixes
+
+- **bigquery-driver:** Align DOW numbering for SQL API, thanks [@tlangton3](https://github.com/tlangton3) ([#10678](https://github.com/cube-js/cube/issues/10678)) ([2f951c1](https://github.com/cube-js/cube/commit/2f951c188d44e84361c4f5664e3eb8b7ad47fd0f)), closes [#10644](https://github.com/cube-js/cube/issues/10644)
+
+### Features
+
+- **tesseract:** Add an opt-in UNION ALL combine for multi-stage results on Cube Store ([#12182](https://github.com/cube-js/cube/issues/12182)) ([67d7d74](https://github.com/cube-js/cube/commit/67d7d74584f13d8789622afe8053ff4e5a034773))
+- **tesseract:** Fold windowed multi-stage measures into one rollup scan ([#12189](https://github.com/cube-js/cube/issues/12189)) ([b162d11](https://github.com/cube-js/cube/commit/b162d11cc48a681b77c6d9cb9e957662bfa06251)), closes [#12183](https://github.com/cube-js/cube/issues/12183) [#12182](https://github.com/cube-js/cube/issues/12182) [#12183](https://github.com/cube-js/cube/issues/12183)
+
+## [1.8.2](https://github.com/cube-js/cube/compare/v1.8.1...v1.8.2) (2026-10-08)
+
+### Bug Fixes
+
+- **schema-compiler:** Stop join-hint enrichment looping on a cyclic join tree ([#12149](https://github.com/cube-js/cube/issues/12149)) ([ba1736f](https://github.com/cube-js/cube/commit/ba1736fa1ceda261d3fcc97c90eaf79ad44903e0)), closes [#9696](https://github.com/cube-js/cube/issues/9696)
+- **tesseract:** Mask masked members read from pre-aggregations ([#12152](https://github.com/cube-js/cube/issues/12152)) ([bbbaea4](https://github.com/cube-js/cube/commit/bbbaea4def64939adb200aeec73143fd1ae0f627))
+
+### Features
+
+- **tesseract:** Anchor rolling windows on multi-stage include date ranges ([#12165](https://github.com/cube-js/cube/issues/12165)) ([1694da0](https://github.com/cube-js/cube/commit/1694da0ad32354d61b713fa4c5eb1497be3a7050))
+
 ## [1.8.1](https://github.com/cube-js/cube/compare/v1.8.0...v1.8.1) (2026-10-07)
 
 ### Bug Fixes

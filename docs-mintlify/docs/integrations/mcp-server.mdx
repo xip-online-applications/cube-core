@@ -30,6 +30,7 @@ Cube hosts an MCP server endpoint. MCP clients connect over HTTPS and authentica
 - **Endpoint:** `https://cubecloud.dev/mcp`
 - **OAuth flow:** Authorization Code + PKCE, scope = `mcp-agent-access`. Most clients discover OAuth automatically and use the public client ID `cube-mcp-client`. Microsoft 365 Copilot requires a separate [OAuth setup](#connect-to-microsoft-365-copilot).
 - **Account selection:** You sign in to Cube as part of the OAuth flow and, if you belong to more than one account, choose which one to connect.
+- **Stateless:** Cube MCP is stateless and follows the [2026-07-28 MCP specification](https://modelcontextprotocol.io/specification/2026-07-28). Each request carries everything the server needs, so no server-side session has to be kept between requests.
 - **Deployment selection:** On connect, the client lands on the tenant **default deployment** set by your admin (or the first deployment you can access). Clients can also target a specific deployment and agent per request — see [Select a deployment and agent](#select-a-deployment-and-agent).
 
 ### One endpoint for everyone
@@ -55,7 +56,8 @@ client to reach a deployment's region directly without passing through the contr
 
 Before enabling MCP, make sure you have:
 
-- **Admin privileges** in your Cube instance
+- **Admin privileges** in your Cube instance, or a [custom role][ref-custom-roles] with the
+  **Manage MCP server and connectors** permission
 - An active Cube tenant
 
 ### 1) Check the MCP page
@@ -65,6 +67,8 @@ ready-made setup snippets for each supported client. If it reads “MCP configur
 unavailable,” the MCP server host isn’t configured for the account yet.
 
 ### 2) Configure deployment access
+
+This step requires admin privileges; the section is hidden from other users.
 
 Go to **Admin → MCP Server** and use the **Deployment Access** section to control which
 deployments MCP clients can reach and where they connect by default:
@@ -599,6 +603,7 @@ and friends) are set.
 - **`Deployment <id> is not available via MCP for this account` (403)**: The requested deployment is excluded by the deployment-access allow-list or by the user's permissions. Call `listDeployments` to see which deployments are reachable, or adjust the allow-list in **Admin → MCP Server → Deployment Access**.
 
 [ref-roles]: /admin/users-and-permissions/roles-and-permissions
+[ref-custom-roles]: /admin/users-and-permissions/custom-roles#global-permissions
 [ref-pre-aggregations]: /docs/pre-aggregations/using-pre-aggregations
 [ref-sql-api]: /reference/core-data-apis/sql-api
 [ref-workbooks]: /docs/explore-analyze/workbooks

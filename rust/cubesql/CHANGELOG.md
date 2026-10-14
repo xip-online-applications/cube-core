@@ -3,6 +3,32 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.6](https://github.com/cube-js/cube/compare/v1.8.5...v1.8.6) (2026-10-13)
+
+**Note:** Version bump only for package @cubejs-backend/cubesql
+
+## [1.8.5](https://github.com/cube-js/cube/compare/v1.8.4...v1.8.5) (2026-10-13)
+
+### Bug Fixes
+
+- **cubesql:** Never render an empty alias for wrapped subqueries ([#12239](https://github.com/cube-js/cube/issues/12239)) ([c50979a](https://github.com/cube-js/cube/commit/c50979aeab49aa0b712355f681d8e62e67d9fae7))
+- **cubesql:** Prune unused members from inner wrapped select ([#11972](https://github.com/cube-js/cube/issues/11972)) ([a3da378](https://github.com/cube-js/cube/commit/a3da378c23550fee9e08526a3e3d08c2edeaa264))
+- **cubesql:** Push down joins between grouped subqueries ([#11584](https://github.com/cube-js/cube/issues/11584)) ([acc203b](https://github.com/cube-js/cube/commit/acc203b532755de57ed0f2ac2cbc2b7690ad9e33))
+
+## [1.8.4](https://github.com/cube-js/cube/compare/v1.8.3...v1.8.4) (2026-10-12)
+
+**Note:** Version bump only for package @cubejs-backend/cubesql
+
+## [1.8.3](https://github.com/cube-js/cube/compare/v1.8.2...v1.8.3) (2026-10-10)
+
+**Note:** Version bump only for package @cubejs-backend/cubesql
+
+## [1.8.2](https://github.com/cube-js/cube/compare/v1.8.1...v1.8.2) (2026-10-08)
+
+### Bug Fixes
+
+- **cubesql:** Keep filters above limited CubeScan ([#12071](https://github.com/cube-js/cube/issues/12071)) ([4b3b59d](https://github.com/cube-js/cube/commit/4b3b59d6c4b35c0ebb731b410851d3fa3295115f))
+
 ## [1.8.1](https://github.com/cube-js/cube/compare/v1.8.0...v1.8.1) (2026-10-07)
 
 **Note:** Version bump only for package @cubejs-backend/cubesql

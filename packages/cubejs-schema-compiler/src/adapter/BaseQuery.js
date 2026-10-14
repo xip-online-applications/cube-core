@@ -562,31 +562,74 @@ export class BaseQuery {
   }
 
   /**
-   * @private
+   * @protected
    * @param { import('../compiler/JoinGraph').FinishedJoinTree } joinTree
    * @param { string[] } joinHints
-   * @return { string[][] }
+   * @return { (string|string[])[] }
    */
   enrichedJoinHintsFromJoinTree(joinTree, joinHints) {
+    // The tree can hold two edges into one cube. The later edge wins so the next pass follows the
+    // later hint (e.g. a view's join path), unless it closes a cycle (hint `c -> b` when `c` is
+    // only reachable through `b`): that parent chain would loop forever
     const joinsMap = {};
 
     for (const j of joinTree.joins) {
       joinsMap[j.to] = j.from;
     }
 
-    return joinHints.map(jh => {
+    // A chain without repeats visits each cube with a parent at most once
+    const maxPathLength = joinTree.joins.length + 1;
+
+    return this.joinPathsToRoot(joinsMap, joinHints, maxPathLength) ??
+      this.joinPathsToRoot(this.acyclicJoinsMap(joinTree), joinHints, maxPathLength);
+  }
+
+  /**
+   * @private
+   * @param { Record<string, string> } joinsMap cube -> the cube it is joined from
+   * @param { string[] } joinHints
+   * @param { number } maxPathLength a longer chain must have looped
+   * @return { (string|string[])[] | null } null when the chain of some hint loops
+   */
+  joinPathsToRoot(joinsMap, joinHints, maxPathLength) {
+    const paths = [];
+
+    for (const jh of joinHints) {
       let cubeName = jh;
       const path = [cubeName];
       while (joinsMap[cubeName]) {
         cubeName = joinsMap[cubeName];
         path.push(cubeName);
+        if (path.length > maxPathLength) {
+          return null;
+        }
       }
 
-      if (path.length === 1) {
-        return path[0];
+      paths.push(path.length === 1 ? path[0] : path.reverse());
+    }
+
+    return paths;
+  }
+
+  /**
+   * @private
+   * @param { import('../compiler/JoinGraph').FinishedJoinTree } joinTree
+   * @return { Record<string, string> }
+   */
+  acyclicJoinsMap(joinTree) {
+    const joinsMap = {};
+
+    for (const j of joinTree.joins) {
+      let ancestor = j.from;
+      while (ancestor && ancestor !== j.to) {
+        ancestor = joinsMap[ancestor];
       }
-      return path.reverse();
-    });
+      if (!ancestor) {
+        joinsMap[j.to] = j.from;
+      }
+    }
+
+    return joinsMap;
   }
 
   /**
@@ -1004,6 +1047,8 @@ export class BaseQuery {
       totalQuery: this.options.totalQuery,
       joinHints: this.options.joinHints,
       cubestoreSupportMultistage: this.options.cubestoreSupportMultistage ?? getEnv('cubeStoreRollingWindowJoin'),
+      multiStageLeafMerge: this.options.multiStageLeafMerge ?? getEnv('tesseractMultiStageLeafMerge'),
+      cubestoreUnionFullKeyAggregate: this.options.cubestoreUnionFullKeyAggregate ?? getEnv('tesseractCubeStoreUnionFullKeyAggregate'),
       maxMultiStageDepth: this.options.maxMultiStageDepth ?? getEnv('maxMultiStageDepth'),
       maxMultiStageStages: this.options.maxMultiStageStages ?? getEnv('maxMultiStageStages'),
       maxMemberResolutionDepth: this.options.maxMemberResolutionDepth ?? getEnv('maxMemberResolutionDepth'),
@@ -1032,6 +1077,7 @@ export class BaseQuery {
   }
 
   // FIXME Temporary solution
+  /** @returns {import('./PreAggregations').PreAggregationForQuery | undefined} */
   findPreAggregationForQueryRust() {
     let optionsOrder = this.options.order;
     if (optionsOrder && !Array.isArray(optionsOrder)) {
@@ -1074,22 +1120,27 @@ export class BaseQuery {
       maxMultiStageStages: this.options.maxMultiStageStages ?? getEnv('maxMultiStageStages'),
       maxMemberResolutionDepth: this.options.maxMemberResolutionDepth ?? getEnv('maxMemberResolutionDepth'),
       disableExternalPreAggregations: !!this.options.disableExternalPreAggregations,
+      // A mask the pre-aggregation can't render rules it out, so the match
+      // must see the same masked members as the SQL build.
+      maskedMembers: this.options.maskedMembers,
       subqueryJoins: this.options.subqueryJoins,
     };
 
     const buildResult = nativeBuildSqlAndParams(queryParams);
 
     const [, , preAggResult] = buildResult;
-    this.applyNativePreAggResult(preAggResult);
-    return this.preAggregations.preAggregationForQuery;
+    return this.applyNativePreAggResult(preAggResult);
   }
 
   applyNativePreAggResult(preAggResult) {
-    if (!preAggResult) return;
-    this.preAggregations.preAggregationUsageInfos = preAggResult;
+    if (!preAggResult?.length) {
+      this.preAggregations.setNativePreAggregationResult(undefined, undefined);
+      return undefined;
+    }
     const first = preAggResult[0];
-    this.preAggregations.preAggregationForQuery =
-      this.getPreAggregationByName(first.cubeName, first.preAggregationName);
+    const preAggregationForQuery = this.getPreAggregationByName(first.cubeName, first.preAggregationName);
+    this.preAggregations.setNativePreAggregationResult(preAggResult, preAggregationForQuery);
+    return preAggregationForQuery;
   }
 
   allCubeMembers(path) {
@@ -3718,9 +3769,13 @@ export class BaseQuery {
   }
 
   maskFilterToSql(filter) {
-    if (!filter) return null;
+    if (!filter) {
+      return null;
+    }
     const filterItems = this.extractFiltersAsTree([filter]);
-    if (!filterItems.length) return null;
+    if (!filterItems.length) {
+      return null;
+    }
     const initialized = filterItems.map(this.initFilter.bind(this));
     if (initialized.length === 1) {
       return initialized[0].filterToWhere();
@@ -4866,6 +4921,8 @@ export class BaseQuery {
         series_bounds_cast: '{{ expr }}',
         bool_param_cast: '{{ expr }}',
         number_param_cast: '{{ expr }}',
+        time_in_list_column_cast: '{{ expr }}',
+        time_in_list_param_cast: '{{ expr }}',
         // Tesseract uses its own join type templates, decoupled from `join_types`
         // which are used by the SQL API push down. FULL is opt-in per dialect.
         join_types_inner: 'INNER',
@@ -5805,7 +5862,9 @@ export class BaseQuery {
           return true;
         }
 
-        if (visited.has(node)) return false;
+        if (visited.has(node)) {
+          return false;
+        }
         visited.add(node);
 
         const neighbors = query.joinGraphPaths[node] || [];
@@ -5836,7 +5895,9 @@ export class BaseQuery {
 
     return (member) => {
       const [cube, field] = member.split('.');
-      if (!cube || !field) return member;
+      if (!cube || !field) {
+        return member;
+      }
 
       if (cube === queryJoinRoot?.root) {
         return member;

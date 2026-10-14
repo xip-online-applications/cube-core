@@ -10,7 +10,7 @@ Controls are widgets that let dashboard viewers change what's shown without leav
 - [Field switcher](#field-switcher) — Swap which dimension or measure the charts are built on
 - [Parent](#parent) — Re-point several other controls at once from a single dropdown
 
-The first three each target a member from your semantic model, and apply the viewer's choice to every [chart][ref-charts] on the dashboard whose query references that member. Filters and time granularity switchers change *how a member is queried* — which rows come back, which buckets they fall into. A field switcher goes further and changes *which member is queried at all*. A parent control works one level up: it targets no member of its own and drives *other controls* instead.
+The first three each target a member from your semantic model, and apply the viewer's choice to every [chart][ref-charts] on the dashboard built on that member's semantic view. Filters and time granularity switchers change *how a member is queried* — which rows come back, which buckets they fall into. A field switcher goes further and changes *which member is queried at all*. A parent control works one level up: it targets no member of its own and drives *other controls* instead.
 
 ## Filter
 
@@ -139,7 +139,7 @@ Moving the parent to an option that sets or resets this filter gives it a value 
 
 A [faceted filter](#faceted-filters) resolves its default inside its facet scope, so the default is always a value its own value list offers, and it resolves again when a sibling filter changes. For a measure of another view, each sibling's condition is carried over to that view's matching dimension, and a condition with no match there leaves the filter with no value rather than resolving over rows its value list excludes. The warning icon described below names that case.
 
-When the data gives no value, the filter applies none: the note after its title reads *No value applied*, and a warning icon at the end of the title line says why:
+When the data gives no value, the filter applies none: the note after its title reads *No value applied*, and a warning icon on the title line says why:
 
 - The dimension returned no rows — for example, because the filter is [faceted](#faceted-filters) and a sibling narrows it to a period with none.
 - The data could not be loaded — for example, because the query failed.
@@ -160,7 +160,7 @@ A faceted filter can take as a source any sibling, on its own semantic view or a
 - `is null`, `is not null`, `is empty` and `is not empty` carry no value and narrow as soon as they are set. Every other condition waits for a value, and until it has one it leaves the value list alone, just as it leaves the charts unfiltered.
 - A condition and value that together leave nothing to scope by narrow nothing either, as the warning below sets out.
 
-To pick which siblings a filter listens to, turn the **Facet** switch on in its edit sidebar: the source picker appears with it, reading **All**. The picker lists every other filter on the dashboard and greys out the ones it cannot use — a sibling whose condition cannot narrow a value list — with a tooltip saying so. A filter on another semantic view is selectable, and picking one adds a row under the picker for [matching it to a dimension of this filter's view](#sources-on-another-semantic-view). Left at **All**, the filter listens to every sibling on its own semantic view that the picker leaves selectable; picking entries narrows it to those. A filter you picked that later stops qualifying stays in the list with a warning icon rather than disappearing from it.
+To pick which siblings a filter listens to, turn the **Facet** switch on in its edit sidebar: the source picker appears with it, reading **All**. The picker lists every other filter on the dashboard and greys out the ones it cannot use — a sibling whose condition cannot be used for faceting — with a tooltip saying so. A filter on another semantic view is selectable, and picking one adds a row under the picker for [matching it to a dimension of this filter's view](#sources-on-another-semantic-view). Left at **All**, the filter listens to every sibling on its own semantic view that the picker leaves selectable; picking entries narrows it to those. A filter you picked that later stops qualifying stays in the list with a warning icon rather than disappearing from it.
 
 **Cancel** leaves the filter on the sources it was last saved with — it discards every unsaved edit in the sidebar, not only the source list — while turning **Facet** back off clears the entries you picked, and the dimensions you matched them to, so switching it on again starts from **All**.
 
@@ -188,6 +188,16 @@ A source can end up with nothing to scope by, leaving the value list as wide as 
 
 A list that *is* being scoped does not necessarily look shorter — a long one fills the dropdown either way, and the values the window drops need not be the ones on screen. To check that a source is narrowing it, look for a value you know the window has no rows for and confirm it is gone from the list. Searching for that value is not a check: a filter's value box takes values that are not in its list, so it offers back whatever you type.
 
+A faceted filter shows a facet icon on its title line, so you can tell which filters it is faceted by without opening its settings; a filter with **Facet** off shows none. Hovering the icon, or focusing it with the keyboard, lists the sources by title — *Faceted by: Status and Created at*. With the picker at **All** these are every sibling the filter follows, including filters placed in a stack, a grid or a tabs container; with entries picked, they are those entries and no other filter. A source the filter cannot use is left out: one on another semantic view you have not matched, and one whose condition cannot be used for faceting. A source is named by its condition, not its value, so it is listed while it waits for a value and in the cases the warning above lists, where its value leaves nothing to scope by. When no source is left — the filter is the only one on the dashboard, or every source you picked is one it cannot use — the icon stays and reads *Faceted by: no other filter*.
+
+In the dashboard builder, the tooltip adds *Click to configure.*, and clicking the icon opens the filter's edit sidebar, where the source picker is. The title line there ends with the widget's settings menu, after the facet icon and any warning icon. On a published dashboard the icon appears only while the pointer is over the filter or keyboard focus is inside it, as a chart's icons appear only while you hover the chart, and it only describes the filter and opens nothing. A source whose [visibility](#visibility) is **Hidden** is counted there rather than named — *Faceted by: Region and 1 hidden filter*, or *Faceted by: 1 hidden filter* when every source is hidden — so the tooltip never names a control the viewer cannot see; a **Disabled** source is named. The dashboard builder names every source, hidden ones included.
+
+Deleting a filter takes it out of every source list it is picked in, together with the dimension it was matched to, and a filter left at **All** follows the siblings that remain.
+
+<Warning>
+**Undo** puts a deleted filter back in every source list it was picked in. Otherwise, deleting the last filter left in a source list turns **Facet** off on the filter that listed it, rather than leaving its picker on **All**, which would make it follow every sibling. Its value list is no longer scoped and its facet icon goes away; to scope it again, turn **Facet** back on and pick its sources.
+</Warning>
+
 #### Sources on another semantic view
 
 A filter on one semantic view can narrow a faceted filter on another, once you say which dimension of the faceted filter's own view the source stands for. Pick it in the source picker like any other sibling and a row appears under the picker: **Based on** names the source's own view and dimension, and the picker beneath it — **Matching dimension for "*the source's title*"** — takes a dimension of *this* filter's view. The value list is scoped through that dimension, so the query behind it never names the source's view. The match is part of the dashboard, so it applies on a published dashboard and in an embed too, including when the source's value arrives in a [URL parameter](#sharing-the-current-selection).
@@ -197,7 +207,7 @@ The match is pre-selected for you when the answer is unambiguous: a dimension of
 Nothing is stored until you **Save**, and clearing a match or unchecking the source drops it from the dashboard: picking that source again suggests a match afresh rather than restoring the one you cleared.
 
 <Warning>
-A source you picked but have not matched narrows nothing, leaving the value list as wide as it was — match it, or uncheck it. Its row says so while it is unmatched: *Until you pick a matching dimension, this source does not narrow the list.*
+A source you picked but have not matched is not used for faceting, leaving the value list as wide as it was — match it, or uncheck it. Its row says so while it is unmatched: *Until you pick a matching dimension, this source is not used for faceting.*
 </Warning>
 
 ## Time granularity switcher
@@ -307,7 +317,7 @@ Cube applies the switch in two places: to the SQL that runs, and to the query de
 
 When only one half can take it, the chart keeps rendering the member it was built on and shows a notice reading **"The Field switcher could not be applied to this chart"**. The usual reason is a query Cube can't read back as semantic members — a hand-written one, or one built with a `JOIN` or `UNION`. The rest of the dashboard still switches.
 
-A chart whose query doesn't use the replaced member at all is a different case: it is simply out of the control's scope, exactly as it would be for a filter, and shows no notice.
+A chart whose query doesn't use the replaced member at all is a different case: there is nothing in it to swap, so it renders unchanged and shows no notice.
 
 A chart with a [period comparison][ref-charts] is a narrower case: the comparison can't follow a member switch, so the chart applies the switch and drops the comparison, saying so in its own notice rather than silently showing a comparison that no longer matches the data.
 
@@ -524,7 +534,9 @@ To keep a Hidden control's value out of a downloaded file, use **Download as PDF
 
 This section applies to filters, time granularity switchers and field switchers. A [parent control](#parent) has no member of its own and never applies to a chart itself, so it doesn't appear in any chart's [Controls mapping](#controls-mapping) — it acts only through the children it drives, and it's those children that show up here.
 
-When a control is added to a dashboard, it's automatically wired up to every [chart][ref-charts] whose query already uses the same member. Charts that don't reference that member are left alone, so a dashboard can mix scoped and unscoped views by default. Filters and time granularity switchers always target a dimension; a [field switcher](#field-switcher) targets a dimension or a measure depending on its **Field Type**, and scopes on whichever it is set to. You can override this default per chart from its [Controls mapping](#controls-mapping) — disable the control for that chart, or remap it onto a different member.
+When a control is added to a dashboard, it's automatically wired up to every [chart][ref-charts] built on the same semantic view as the control's member. Charts built on other semantic views are left alone, so a dashboard can mix scoped and unscoped charts by default. Filters and time granularity switchers always target a dimension; a [field switcher](#field-switcher) targets a dimension or a measure depending on its **Field Type**, and scopes on whichever it is set to. You can override this default per chart from its [Controls mapping](#controls-mapping) — disable the control for that chart, or remap it onto a different member.
+
+Adding a chart built on a different semantic view is the case where this needs attention. If at least one control has a [mapping suggestion](#controls-mapping) on the new chart's view, a prompt appears with **Review…**, which opens the chart's [Controls mapping](#controls-mapping) with the suggestions pre-selected, and **Dismiss**, which leaves the mappings as they are. If no control has a suggestion, no prompt appears, and you map controls to the chart by hand.
 
 ### Incompatible controls
 
@@ -541,20 +553,23 @@ Hover over the icon for details. Click it to open the chart's [Controls mapping]
 
 ### Controls mapping
 
-Each chart decides which controls apply to it through its **Controls mapping**. The mapping is resolved automatically in most cases and only needs manual attention when a control targets a member the chart doesn't have.
+Each chart decides which controls apply to it through its **Controls mapping**. The mapping is resolved automatically in most cases and only needs manual attention when a control targets a member that isn't on the chart's semantic view.
 
 Open **Controls mapping** from a chart's settings menu to inspect or override the mapping for that chart. For each control on the dashboard you can:
 
 - **Toggle the control on or off** for the chart, even when a mapping exists
 - **Pick a different member** from the chart's semantic view to remap the control to
 
-Three states show up in the mapping sidebar:
+Four states show up in the mapping sidebar:
 
 | Status | What it means |
 |---|---|
 | **Mapped automatically** | The control's member exists on the chart's semantic view, so it's wired up without configuration. |
 | **Manually mapped** | You (or an AI agent) picked a specific member for this chart. **Reset** restores the automatic mapping. |
-| **Can't map automatically** | The control targets a member that doesn't exist on the chart's semantic view. The chart is unaffected by the control until you map it manually. |
+| **Mapping suggestion** | The control's member isn't on the chart's semantic view, but a different member there has the same name and type. The suggestion is pre-selected in the picker, so saving maps the control, along with any other pending suggestions. Pick a different member, or clear it, to override. |
+| **Can't map automatically** | The control targets a member that doesn't exist on the chart's semantic view, and nothing there could be suggested. The chart is unaffected by the control until you map it manually. |
+
+Two semantic views can share a member name and mean different things by it, so a suggestion reaches a chart only once the mapping is saved. Among members of the control's type, an exact name match wins. Failing that, names are compared ignoring case, and a suggestion is made only when exactly one member matches. Controls you turned off for the chart are not suggested.
 
 Each control's picker offers only the members it can actually be resolved against, so a mapping you can stage is a mapping that will work:
 
