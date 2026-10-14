@@ -19,6 +19,7 @@ import { ContinueWaitError } from './ContinueWaitError';
 import { LocalQueueDriver } from './LocalQueueDriver';
 import { QueryStream } from './QueryStream';
 import { CacheAndQueryDriverType } from './QueryOrchestrator';
+import { firstLine } from './utils';
 
 export type CancelHandlerFn = (query: QueryDef) => Promise<void>;
 export type QueryHandlerFn = (query: QueryDef, cancelHandler: CancelHandlerFn) => Promise<unknown>;
@@ -766,15 +767,17 @@ export class QueryQueue {
       executionResult = {
         error: (e.message || e).toString() // TODO error handling
       };
+      // Detail at debug: the API layer reports the failure once at the default level
+      // (cube.query.completed); the SQL is in the 'Executing SQL' line of the same requestId
       this.logger('Error while querying', {
+        level: 'debug',
         queueId,
         queueSize: 0,
         duration: ((new Date()).getTime() - startQueryTime),
-        queryKey: query.queryKey,
         queuePrefix: this.redisQueuePrefix,
         requestId: query.requestId,
         timeInQueue: 0,
-        error: (e.stack || e).toString()
+        error: firstLine((e.stack || e).toString())
       });
       if (e instanceof TimeoutError) {
         if (handler) {
@@ -888,10 +891,10 @@ export class QueryQueue {
       });
 
       const logExecutionError = ({ error, duration }: { error: any, duration: number }) => this.logger('Error while querying', {
+        level: 'debug',
         queueId,
         queueSize,
         duration,
-        queryKey: query.queryKey,
         queuePrefix: this.redisQueuePrefix,
         requestId: query.requestId,
         timeInQueue,
@@ -900,7 +903,7 @@ export class QueryQueue {
         newVersionEntry: query.query?.newVersionEntry,
         preAggregation: query.query?.preAggregation,
         addedToQueueTime: query.addedToQueueTime,
-        error: (error.stack || error).toString()
+        error: firstLine((error.stack || error).toString())
       });
       this.logger('Performing query', {
         queueId,

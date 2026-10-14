@@ -84,6 +84,11 @@ const NUMERIC_RE = /^-?\d+(\.\d+)?$/;
 // A quoted literal ('…' or "…", doubled quotes as escapes); an unterminated one runs to the end
 const QUOTED_LITERAL_RE = /'(?:[^']|'')*(?:'|$)|"(?:[^"]|"")*(?:"|$)/g;
 
+// A double-quoted SQL identifier, and the word before it in database errors such as
+// `relation "x" does not exist`
+const IDENTIFIER_RE = /^"[\w$.-]{1,128}"$/;
+const IDENTIFIER_PREFIX_RE = /\b(relation|table|schema)\s+$/i;
+
 const TOKEN_RE = /^[A-Za-z][\w-]{0,63}$/;
 const TIMEOUT_RE = /time(d)?[\s_-]?out/i;
 
@@ -307,7 +312,12 @@ function redactErrorMessage(
     // literals cannot be delimited: drop everything from the first quote on
     result = result.replace(/['"][\s\S]*$/, MASKED_LITERAL);
   } else if (maskLiterals) {
-    result = result.replace(QUOTED_LITERAL_RE, MASKED_LITERAL);
+    // The name of a missing relation or column is an identifier, not a data value: keep it
+    result = result.replace(QUOTED_LITERAL_RE, (match: string, offset: number) => (
+      IDENTIFIER_RE.test(match) && IDENTIFIER_PREFIX_RE.test(result.slice(Math.max(0, offset - 12), offset))
+        ? match
+        : MASKED_LITERAL
+    ));
   }
 
   // Longest first, so a value containing another one is replaced whole
@@ -504,7 +514,10 @@ export class QueryCompletionLogger {
 
     let level: LogLevel = 'debug';
     if (failed) {
-      level = 'error';
+      // A client mistake (4xx the user-facing way) is a warning; the rest is ours to look at
+      const clientError = !isRefresh && safeGet(input.error, 'userFacing') === true
+        && Number.isInteger(input.status) && (input.status as number) >= 400 && (input.status as number) < 500;
+      level = clientError ? 'warn' : 'error';
     } else if (isRefresh) {
       // One line per refresh cycle, whatever its duration
       level = 'info';

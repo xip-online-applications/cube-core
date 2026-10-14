@@ -42,6 +42,11 @@ describe('prodLogger', () => {
     expect('timestamp' in parsed).toBe(false);
   });
 
+  test('ts, level, event and pod come first, whatever the params order', () => {
+    prodLogger('info')('cube.query.completed', { requestId: 'r1', level: 'warn', slow: true });
+    expect(Object.keys(JSON.parse(lines()[0])).slice(0, 4)).toEqual(['ts', 'level', 'event', 'pod']);
+  });
+
   test('ts defaults to an ISO timestamp', () => {
     prodLogger('info')('x', { level: 'info' });
     expect(new Date(JSON.parse(lines()[0]).ts).toISOString()).toBe(JSON.parse(lines()[0]).ts);

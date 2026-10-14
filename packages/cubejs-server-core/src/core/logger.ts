@@ -209,7 +209,7 @@ const writeProdLine = (event: string, params: LoggerFnParams, level: LogLevel, f
   let serialized: string;
   try {
     serialized = JSON.stringify({
-      ...restParams, ts, level, event: eventName, pod,
+      ts, level, event: eventName, pod, ...restParams,
     }, safeReplacer());
   } catch (e) {
     serialized = JSON.stringify({
