@@ -3,7 +3,6 @@ use super::{LogicalNodeProcessor, ProcessableNode};
 use crate::logical_plan::*;
 use crate::physical_plan::join::JoinType;
 use crate::physical_plan::schema::QualifiedColumnName;
-use crate::physical_plan::sql_nodes::SqlNodesFactory;
 use crate::physical_plan::ReferencesBuilder;
 use crate::physical_plan::VisitorContext;
 use crate::physical_plan::*;
@@ -11,9 +10,9 @@ use crate::physical_plan_builder::context::MultiStageDimensionContext;
 use crate::planner::query_properties::OrderByItem;
 use crate::planner::query_tools::QueryTools;
 use crate::planner::sql_templates::PlanSqlTemplates;
+use crate::planner::symbols::transforms as symbol_transforms;
 use crate::planner::{CubeId, MemberSymbol};
 use cubenativeutils::CubeError;
-use itertools::Itertools;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -105,27 +104,6 @@ impl PhysicalPlanBuilder {
         self.process_node(logical_plan.as_ref(), context)
     }
 
-    pub(super) fn measures_for_query(
-        &self,
-        node_measures: &Vec<Rc<MemberSymbol>>,
-        context: &PushDownBuilderContext,
-    ) -> Vec<(Rc<MemberSymbol>, bool)> {
-        if context.dimensions_query {
-            return vec![];
-        }
-        if let Some(required_measures) = &context.required_measures {
-            required_measures
-                .iter()
-                .map(|member| (member.clone(), node_measures.iter().any(|m| m == member)))
-                .collect_vec()
-        } else {
-            node_measures
-                .iter()
-                .map(|member| (member.clone(), true))
-                .collect_vec()
-        }
-    }
-
     pub(super) fn add_subquery_join(
         &self,
         dimension_subquery: Rc<DimensionSubQuery>,
@@ -133,11 +111,15 @@ impl PhysicalPlanBuilder {
         context: &PushDownBuilderContext,
     ) -> Result<(), CubeError> {
         let mut context = context.clone();
-        context.dimensions_query = false;
         context.measure_subquery = true;
         let sub_query = self.process_node(dimension_subquery.query.as_ref(), &context)?;
         let dim_name = dimension_subquery.subquery_dimension.name();
-        let cube_name = dimension_subquery.subquery_dimension.cube_id();
+        let cube_id = dimension_subquery.subquery_dimension.cube_id();
+        let cube_name = if cube_id.is_joined() {
+            self.query_tools.alias_for_cube(&cube_id)?
+        } else {
+            cube_id.to_string()
+        };
         let primary_keys_dimensions = &dimension_subquery.primary_keys_dimensions;
         let sub_query_alias = format!("{cube_name}_{dim_name}_subquery");
         let conditions = primary_keys_dimensions
@@ -181,23 +163,26 @@ impl PhysicalPlanBuilder {
 
                 if let Ok(dimension) = dim.as_dimension() {
                     if dimension.is_calc_group() {
+                        // Left to the enclosing select's substitutions.
                         return Ok(vec![(sub_query_ref, Expr::new_member(dim.clone()))]);
                     }
                 }
 
-                let mut context_factory = context.make_sql_nodes_factory()?;
-                references_builder.resolve_references_for_member(
+                let mut substitutions = ReferenceSubstitutions::new();
+                references_builder.collect_substitutions_for_member(
                     dim.clone(),
                     &None,
-                    context_factory.render_references_mut(),
+                    &mut substitutions,
                 )?;
+                let dim = symbol_transforms::substitute_by_name(dim, &substitutions)?;
 
+                let context_factory = context.make_sql_nodes_factory()?;
                 let visitor_context =
                     VisitorContext::new(self.query_tools.clone(), &context_factory, None);
 
                 Ok(vec![(
                     sub_query_ref,
-                    Expr::new_member_with_context(dim.clone(), Rc::new(visitor_context)),
+                    Expr::new_member_with_context(dim, Rc::new(visitor_context)),
                 )])
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -206,40 +191,44 @@ impl PhysicalPlanBuilder {
             dimension_schema.name.clone(),
             dimension_schema.schema.clone(),
             None,
-            JoinCondition::new_dimension_join(conditions, false),
+            JoinCondition::new_dimension_join(conditions, true),
         );
         Ok(())
     }
 
-    pub(super) fn resolve_subquery_dimensions_references(
+    /// A subquery dimension is read under the alias of the measure that
+    /// computes it: one member's id maps to another member's column.
+    pub(super) fn collect_subquery_dimensions_substitutions(
         &self,
         dimension_subqueries: &Vec<Rc<DimensionSubQuery>>,
         references_builder: &ReferencesBuilder,
-        context_factory: &mut SqlNodesFactory,
+        substitutions: &mut ReferenceSubstitutions,
     ) -> Result<(), CubeError> {
         for dimension_subquery in dimension_subqueries.iter() {
-            if let Some(dim_ref) = references_builder.find_reference_for_member(
+            let Some(dim_ref) = references_builder.find_reference_for_member(
                 &dimension_subquery.measure_for_subquery_dimension,
                 &None,
-            ) {
-                context_factory.add_render_reference(
-                    dimension_subquery.subquery_dimension.full_name(),
-                    dim_ref,
-                );
-            } else {
+            ) else {
                 return Err(CubeError::internal(format!(
                     "Can't find source for subquery dimension {}",
                     dimension_subquery.subquery_dimension.full_name()
                 )));
-            }
+            };
+            substitutions.insert(
+                dimension_subquery.subquery_dimension.id().clone(),
+                column_reference(&dimension_subquery.subquery_dimension, dim_ref),
+            );
         }
         Ok(())
     }
 
+    /// Builds the ORDER BY of a select. A measure absent from the schema
+    /// carries its own symbol, so it gets the select's substitutions here.
     pub(crate) fn make_order_by(
         &self,
         logical_schema: &LogicalSchema,
         order_by: &Vec<OrderByItem>,
+        substitutions: &ReferenceSubstitutions,
     ) -> Result<Vec<OrderBy>, CubeError> {
         let mut result = Vec::new();
         for o in order_by.iter() {
@@ -249,8 +238,10 @@ impl PhysicalPlanBuilder {
             // correct processing of order by dimension that is not included in the
             // selection list will be implemented
             if positions.is_empty() && o.member_symbol().is_measure() {
+                let symbol =
+                    symbol_transforms::substitute_by_name(&o.member_symbol(), substitutions)?;
                 result.push(OrderBy::new(
-                    Expr::Member(MemberExpression::new(o.member_symbol())),
+                    Expr::Member(MemberExpression::new(symbol)),
                     0,
                     o.desc(),
                 ));
@@ -273,27 +264,33 @@ impl PhysicalPlanBuilder {
         Ok(result)
     }
 
-    pub(super) fn process_query_dimension(
+    /// A dimension a full join projects as `COALESCE` is read from no single
+    /// source, so it stays computed.
+    pub(super) fn collect_query_dimension_substitution(
         &self,
         dimension: &Rc<MemberSymbol>,
         references_builder: &ReferencesBuilder,
+        from: &Rc<From>,
+        substitutions: &mut ReferenceSubstitutions,
+    ) -> Result<(), CubeError> {
+        if self.dimension_coalesce_refs(dimension, from).is_some() {
+            return Ok(());
+        }
+        references_builder.collect_substitutions_for_member(dimension.clone(), &None, substitutions)
+    }
+
+    pub(super) fn project_query_dimension(
+        &self,
+        dimension: &Rc<MemberSymbol>,
         select_builder: &mut SelectBuilder,
-        context_factory: &mut SqlNodesFactory,
         context: &PushDownBuilderContext,
     ) -> Result<(), CubeError> {
         if let Some(coalesce_ref) = self.dimension_coalesce_refs(dimension, select_builder.from()) {
             select_builder.add_projection_coalesce_member(dimension, coalesce_ref, None)?;
+        } else if context.measure_subquery {
+            select_builder.add_projection_member_without_schema(dimension, None);
         } else {
-            references_builder.resolve_references_for_member(
-                dimension.clone(),
-                &None,
-                context_factory.render_references_mut(),
-            )?;
-            if context.measure_subquery {
-                select_builder.add_projection_member_without_schema(dimension, None);
-            } else {
-                select_builder.add_projection_member(dimension, None);
-            }
+            select_builder.add_projection_member(dimension, None);
         }
         Ok(())
     }

@@ -4,7 +4,7 @@ describe('OrchestratorApi', () => {
   // https://github.com/cube-js/cube/issues/11313
   test('getPreAggregationQueueStates forwards dataSource to the orchestrator', async () => {
     const api = Object.create(OrchestratorApi.prototype);
-    const getPreAggregationQueueStates = jest.fn(async () => []);
+    const getPreAggregationQueueStates = jest.fn(async (): Promise<unknown[]> => []);
     api.orchestrator = { getPreAggregationQueueStates };
 
     await api.getPreAggregationQueueStates('test_ds');
@@ -36,13 +36,13 @@ describe('OrchestratorApi', () => {
     test('Slow Query Warning carries level debug', async () => {
       const api = makeApi({
         fetchQuery: () => new Promise(() => undefined),
-        resultFromCacheIfExists: async () => ({ data: [] }),
+        resultFromCacheIfExists: async () => ({ data: [] as unknown[] }),
       });
 
       const result = await api.executeQuery({ ...query });
       expect(result.slowQuery).toBe(true);
 
-      const slow = api.logger.mock.calls.find(([type]) => type === 'Slow Query Warning');
+      const slow = api.logger.mock.calls.find(([type]: [string]) => type === 'Slow Query Warning');
       expect(slow).toBeDefined();
       expect(slow[1].level).toBe('debug');
     });
@@ -56,7 +56,7 @@ describe('OrchestratorApi', () => {
 
       await expect(api.executeQuery({ ...query })).rejects.toBeDefined();
 
-      const failed = api.logger.mock.calls.find(([type]) => type === 'Error querying db');
+      const failed = api.logger.mock.calls.find(([type]: [string]) => type === 'Error querying db');
       expect(failed).toBeDefined();
       expect(failed[1].level).toBe('debug');
     });

@@ -2,14 +2,15 @@ use super::{
     EvaluationContext, MultiStageInodeMember, MultiStageInodeMemberType, MultiStageMemberType,
     MultiStageQueryDescription, PlanningScope, RollingWindowDescription, TimeSeriesDescription,
 };
+use crate::logical_plan::transforms as logical_transforms;
 use crate::logical_plan::*;
 use crate::planner::planners::{multi_stage::RollingWindowType, QueryPlanner, SimpleQueryPlanner};
 use crate::planner::state::State;
 use crate::planner::symbols::transforms;
 use crate::planner::GranularityHelper;
-use crate::planner::MemberSymbol;
 use crate::planner::MultiStageGrain;
 use crate::planner::TimeDimensionSymbol;
+use crate::planner::{MeasureRenderModifier, MemberSymbol};
 use crate::planner::{OrderByItem, QueryProperties};
 
 use cubenativeutils::CubeError;
@@ -156,8 +157,7 @@ impl MultiStageMemberQueryPlanner {
                 let granularity_obj = GranularityHelper::make_granularity_obj(
                     self.query_tools.cube_evaluator().clone(),
                     &mut evaluator_compiler,
-                    &time_dimension.cube_id(),
-                    &time_dimension.name(),
+                    time_dimension.base_symbol(),
                     Some(granularity.clone()),
                 )?;
                 Ok(MemberSymbol::new_time_dimension(TimeDimensionSymbol::new(
@@ -235,8 +235,7 @@ impl MultiStageMemberQueryPlanner {
                 let Some(granularity_obj) = GranularityHelper::make_granularity_obj(
                     self.query_tools.cube_evaluator().clone(),
                     &mut evaluator_compiler,
-                    &time_dimension.cube_id(),
-                    &time_dimension.name(),
+                    time_dimension,
                     Some(query_granularity.clone()),
                 )?
                 else {
@@ -392,7 +391,6 @@ impl MultiStageMemberQueryPlanner {
             .source(Rc::new(
                 FullKeyAggregate::builder()
                     .schema(full_key_aggregate_schema)
-                    .use_full_join_and_coalesce(true)
                     .multi_stage_subquery_refs(input_sources)
                     .keys_input(keys_input)
                     .build(),
@@ -468,7 +466,6 @@ impl MultiStageMemberQueryPlanner {
             .source(Rc::new(
                 FullKeyAggregate::builder()
                     .schema(full_key_aggregate_schema)
-                    .use_full_join_and_coalesce(true)
                     .multi_stage_subquery_refs(input_sources)
                     .build(),
             ))
@@ -483,7 +480,7 @@ impl MultiStageMemberQueryPlanner {
 
     /// Builds the leaf CTE for a base measure — runs a `QueryPlanner`
     /// on the description's state with `allow_multi_stage = false`,
-    /// then wraps the result in a `MultiStageLeafMeasure`. The shared
+    /// then wraps the result in a leaf CTE. The shared
     /// `scope` receives any CTEs the leaf planning produces
     /// (multiplied-measure subqueries), so they land in the root
     /// `WITH` list instead of nesting. Respects the
@@ -554,14 +551,21 @@ impl MultiStageMemberQueryPlanner {
         let query = scope.with_evaluation_context(evaluation_context.clone(), |scope| {
             query_planner.plan(scope)
         })?;
-        let leaf_measure_plan = MultiStageLeafMeasure {
-            measures: vec![member_node.clone()],
-            query,
-            evaluation_context,
+        // An ungrouped leaf feeds a stage that aggregates its rows, so its
+        // measures render as row-level values.
+        let query = if evaluation_context.measure_for_ungrouped {
+            logical_transforms::measures_render_modifier_in_query(
+                &query,
+                &MeasureRenderModifier::RawValue,
+            )?
+        } else {
+            query
         };
         let result = LogicalMultiStageMember {
             name: self.description.alias().clone(),
-            member_type: MultiStageMemberLogicalType::LeafMeasure(Rc::new(leaf_measure_plan)),
+            member_type: MultiStageMemberLogicalType::LeafMeasure(
+                query.with_evaluation_context(Some(evaluation_context)),
+            ),
         };
         Ok(Rc::new(result))
     }
