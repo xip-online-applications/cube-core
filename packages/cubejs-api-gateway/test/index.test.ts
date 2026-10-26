@@ -6,6 +6,7 @@ import express from 'express';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { DefaultEventEmitter } from '@cubejs-backend/event-emitter';
+import { testLogger } from '@cubejs-backend/shared';
 
 import * as console from 'console';
 import { ApiGateway, ApiGatewayOptions, Query, QueryRequest, Request } from '../src';
@@ -31,8 +32,6 @@ jest.mock('@cubejs-backend/native', () => {
     get: (target, prop) => (prop === 'redactSqlLiterals' ? redactSqlLiterals : target[prop]),
   });
 });
-
-const logger = (type, message) => console.log({ type, ...message });
 
 async function requestBothGetAndPost(app, { url, query, body }, assert) {
   {
@@ -66,7 +65,7 @@ async function createApiGateway(
   process.env.NODE_ENV = 'production';
 
   const eventEmitter = new DefaultEventEmitter();
-  const apiGateway = new ApiGateway(API_SECRET, compilerApi, async () => adapterApi, logger, eventEmitter, {
+  const apiGateway = new ApiGateway(API_SECRET, compilerApi, async () => adapterApi, testLogger, eventEmitter, {
     standalone: true,
     dataSourceStorage,
     basePath: '/cubejs-api',
@@ -98,7 +97,7 @@ describe('enforceSecurityChecks resolution', () => {
     API_SECRET,
     compilerApi,
     async () => new AdapterApiMock(),
-    logger,
+    testLogger,
     new DefaultEventEmitter(),
     {
       standalone: true,
@@ -570,6 +569,30 @@ describe('API Gateway', () => {
       .expect(400);
     console.log(res.body);
     expect(res.body.error).toMatch(/Values required for filter/);
+  });
+
+  test('queryRewrite that returns no query is a user error', async () => {
+    const { app } = await createApiGateway(
+      new AdapterApiMock(),
+      new DataSourceStorageMock(),
+      {
+        checkAuth: (req: Request, authorization) => {
+          if (authorization) {
+            jwt.verify(authorization, API_SECRET);
+            req.authInfo = authorization;
+          }
+        },
+        // A user's queryRewrite that forgets to return on one of its paths
+        queryRewrite: async () => undefined as unknown as Query,
+      }
+    );
+
+    const res = await request(app)
+      .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
+      .set('Authorization', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M')
+      .expect(400);
+
+    expect(res.body.error).toEqual('queryRewrite must return the query, but it returned undefined');
   });
 
   test('normalize queryRewrite limit', async () => {
@@ -1132,7 +1155,7 @@ describe('API Gateway', () => {
           },
         };
       };
-      const apiGateway = new ApiGateway(API_SECRET, recordingCompilerApi, async () => new AdapterApiMock(), logger, new DefaultEventEmitter(), {
+      const apiGateway = new ApiGateway(API_SECRET, recordingCompilerApi, async () => new AdapterApiMock(), testLogger, new DefaultEventEmitter(), {
         standalone: true,
         dataSourceStorage: new DataSourceStorageMock(),
         basePath: '/cubejs-api',
@@ -2115,7 +2138,7 @@ describe('query completion logging', () => {
     }
   }
 
-  const build = (options: Partial<ApiGatewayOptions> = {}, gatewayLogger: any = logger, adapterApi: any = new AdapterApiMock()) => {
+  const build = (options: Partial<ApiGatewayOptions> = {}, gatewayLogger: any = testLogger, adapterApi: any = new AdapterApiMock()) => {
     const apiGateway = new ApiGatewayWithCompletionLogger(
       API_SECRET,
       compilerApi,
@@ -2304,7 +2327,7 @@ describe('query completion logging', () => {
         }
       }
       process.env.LOG_LEVEL = 'info';
-      const { app } = build({}, logger, new ContinueWaitAdapterApi());
+      const { app } = build({}, testLogger, new ContinueWaitAdapterApi());
 
       await request(app)
         .get('/cubejs-api/v1/load?query={"measures":["Foo.bar"]}')
@@ -2358,7 +2381,7 @@ describe('query completion logging', () => {
       const lines = completedLines();
       expect(lines).toHaveLength(2);
       for (const line of lines) {
-        expect(line).toMatchObject({ level: 'error', status: 400, queryHash: 'unparsable00', cubes: [] });
+        expect(line).toMatchObject({ level: 'warn', status: 400, queryHash: 'unparsable00', cubes: [] });
       }
     });
   });

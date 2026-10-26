@@ -5,6 +5,7 @@ import {
   ContinueWaitError,
   DriverFactoryByDataSource,
   DriverType,
+  PreAggregationDescription,
   Query,
   QueryBody,
   QueryOrchestrator,
@@ -13,7 +14,7 @@ import {
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
 import { getPodName } from '@cubejs-backend/shared';
 import { Tracer } from '@cubejs-backend/tracer';
-import { DatabaseType, RequestContext } from './types';
+import { DatabaseType, LoggerFn, RequestContext } from './types';
 
 export interface OrchestratorApiOptions extends QueryOrchestratorOptions {
   contextToDbType: (dataSource: string) => Promise<DatabaseType>;
@@ -40,7 +41,7 @@ export class OrchestratorApi {
 
   public constructor(
     protected readonly driverFactory: DriverFactoryByDataSource,
-    protected readonly logger,
+    protected readonly logger: LoggerFn,
     protected readonly eventEmitter: EventEmitterInterface,
     protected readonly options: OrchestratorApiOptions
   ) {
@@ -147,7 +148,7 @@ export class OrchestratorApi {
       data.extDbType = this.options.contextToExternalDbType();
 
       return data;
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof pt.TimeoutError || err instanceof ContinueWaitError) {
         this.logger('Continue wait', {
           duration: ((new Date()).getTime() - startQueryTime),
@@ -208,7 +209,7 @@ export class OrchestratorApi {
         level: 'debug',
         query: queryForLog,
         params: query.values,
-        error: ((err as Error).stack || err),
+        error: err.stack || err,
         requestId: query.requestId
       });
 
@@ -313,11 +314,15 @@ export class OrchestratorApi {
     }
   }
 
-  public addDataSeenSource(dataSource) {
+  public addDataSeenSource(dataSource: string) {
     this.seenDataSources[dataSource] = true;
   }
 
-  public getPreAggregationVersionEntries(context: RequestContext, preAggregations, preAggregationsSchema): Promise<any> {
+  public getPreAggregationVersionEntries(
+    context: RequestContext,
+    preAggregations: Parameters<QueryOrchestrator['getPreAggregationVersionEntries']>[0],
+    preAggregationsSchema: string,
+  ): Promise<any> {
     return this.orchestrator.getPreAggregationVersionEntries(
       preAggregations,
       preAggregationsSchema,
@@ -325,7 +330,7 @@ export class OrchestratorApi {
     );
   }
 
-  public getPreAggregationPreview(context: RequestContext, preAggregation) {
+  public getPreAggregationPreview(context: RequestContext, preAggregation: PreAggregationDescription) {
     return this.orchestrator.getPreAggregationPreview(context.requestId, preAggregation);
   }
 

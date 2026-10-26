@@ -1,6 +1,7 @@
 import { Readable } from 'stream';
 import { EventEmitter } from 'events';
 import type { BaseDriver } from '@cubejs-backend/base-driver';
+import { testLogger } from '@cubejs-backend/shared';
 import type { OmitKnown } from '@cubejs-backend/shared';
 import { QueryOrchestrator } from '../../src/orchestrator/QueryOrchestrator';
 import { LocalCacheDriver } from '../../src/orchestrator/LocalCacheDriver';
@@ -190,7 +191,7 @@ class MockDriver {
       throw new Error(`Can't drop table twice: ${tableName}`);
     }
     this.droppedTables.push(tableName);
-    console.log(`Driver drops ${tableName}`);
+    testLogger('Driver drops table', { tableName });
     if (!this.tablesObj.find(t => t.tableName === tableName)) {
       throw new Error(`Can't drop missing table: ${tableName}`);
     }
@@ -368,8 +369,6 @@ describe('QueryOrchestrator', () => {
     };
     // The mocks implement only the part of BaseDriver the orchestrator touches.
     const driverFactory = (dataSource: string) => mockDriverFor(dataSource) as unknown as BaseDriver;
-    const logger =
-      (msg, params) => console.log(new Date().toJSON(), msg, params);
     const options = (processUid) => ({
       externalDriverFactory: () => externalMockDriverLocal as unknown as BaseDriver,
       queryCacheOptions: {
@@ -390,9 +389,9 @@ describe('QueryOrchestrator', () => {
     });
 
     queryOrchestrator =
-      new TestQueryOrchestrator(redisPrefix, driverFactory, logger, new EventEmitter(), options('p1'));
+      new TestQueryOrchestrator(redisPrefix, driverFactory, testLogger, new EventEmitter(), options('p1'));
     queryOrchestratorExternalRefresh =
-      new TestQueryOrchestrator(redisPrefix, driverFactory, logger, new EventEmitter(), {
+      new TestQueryOrchestrator(redisPrefix, driverFactory, testLogger, new EventEmitter(), {
         ...options('p1'),
         preAggregationsOptions: {
           ...options('p1').preAggregationsOptions,
@@ -400,7 +399,7 @@ describe('QueryOrchestrator', () => {
         },
       });
     queryOrchestratorDropWithoutTouch =
-      new TestQueryOrchestrator(redisPrefix, driverFactory, logger, new EventEmitter(), {
+      new TestQueryOrchestrator(redisPrefix, driverFactory, testLogger, new EventEmitter(), {
         ...options('p1'),
         preAggregationsOptions: {
           ...options('p1').preAggregationsOptions,
@@ -1825,7 +1824,7 @@ describe('QueryOrchestrator', () => {
     const streamingNode = (processUid: string) => new TestQueryOrchestrator(
       redisPrefix,
       () => mockDriver as unknown as BaseDriver,
-      (msg, params) => console.log(new Date().toJSON(), msg, params),
+      testLogger,
       new EventEmitter(),
       {
         continueWaitTimeout: 1,
@@ -2004,7 +2003,7 @@ describe('QueryOrchestrator', () => {
       metadataOrchestrator = new TestQueryOrchestrator(
         'ORCHESTRATOR_TEST_METADATA',
         driverFactory,
-        console.log,
+        testLogger,
         new EventEmitter(),
         {
           cacheAndQueueDriver: 'memory',

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { EventEmitter } from 'events';
 import { QueryOrchestrator } from '../../src/orchestrator/QueryOrchestrator';
 
 class MockDriver {
@@ -208,8 +209,8 @@ describe('pre-aggregation build jobs', () => {
       },
     };
 
-    orchestrator = new QueryOrchestrator(prefix, driverFactory as any, logger, options as any);
-    orchestratorExternalRefresh = new QueryOrchestrator(prefix, driverFactory as any, logger, {
+    orchestrator = new QueryOrchestrator(prefix, driverFactory as any, logger, new EventEmitter(), options as any);
+    orchestratorExternalRefresh = new QueryOrchestrator(prefix, driverFactory as any, logger, new EventEmitter(), {
       ...options,
       preAggregationsOptions: {
         ...options.preAggregationsOptions,

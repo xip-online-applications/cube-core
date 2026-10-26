@@ -41,6 +41,7 @@ const BRIDGES: BridgeSpec[] = [
       'cube_evaluator',
       'cubestore_support_multistage',
       'cubestore_union_full_key_aggregate',
+      'data_source',
       'dimensions',
       'disable_external_pre_aggregations',
       'export_annotated_sql',
@@ -100,6 +101,7 @@ const BRIDGES: BridgeSpec[] = [
       'is_calendar',
       'is_view',
       'join_map',
+      'joins',
       'name',
       'sql',
       'sql_alias',
@@ -131,6 +133,7 @@ const BRIDGES: BridgeSpec[] = [
       'add_group_by_references',
       'case',
       'dimension_type',
+      'field_type',
       'filter',
       'included',
       'latitude',
@@ -182,7 +185,7 @@ const BRIDGES: BridgeSpec[] = [
   { name: 'joinDefinition', expected: ['joins', 'multiplication_factor', 'root'] },
   { name: 'joinGraph', expected: ['build_join'] },
   { name: 'joinItem', expected: ['from', 'join', 'original_from', 'original_to', 'to'] },
-  { name: 'joinItemDefinition', expected: ['relationship', 'sql'] },
+  { name: 'joinItemDefinition', expected: ['alias', 'name', 'relationship', 'sql'] },
   {
     name: 'measureDefinition',
     expected: [
