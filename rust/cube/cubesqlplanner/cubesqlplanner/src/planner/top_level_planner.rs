@@ -43,12 +43,14 @@ impl TopLevelPlanner {
         let query = query_planner.plan(&mut scope)?;
         let logical_plan = Rc::new(
             RootQuery::builder()
-                .ctes(scope.into_members())
+                .subqueries(scope.into_members())
                 .query(query)
                 .build(),
         );
+        logical_plan.check_integrity()?;
 
         let (optimized_plan, usages) = self.try_pre_aggregations(logical_plan.clone())?;
+        optimized_plan.check_integrity()?;
 
         // Match-only mode (refresh/metadata path): the caller only needs the matched
         // pre-aggregation(s), not the outer query SQL. Skip the physical build, which for a
@@ -64,11 +66,13 @@ impl TopLevelPlanner {
         // by a rollup holding one of them. Moved above `try_pre_aggregations`,
         // a model storing one rollup per rolling measure silently falls back to
         // the fact table for all of them.
-        let optimized_plan = RollingBaseScanOptimizer::new().optimize(optimized_plan);
+        let optimized_plan = RollingBaseScanOptimizer::new().optimize(optimized_plan)?;
+        optimized_plan.check_integrity()?;
         let (optimized_plan, usages) = if self.request.multi_stage_leaf_merge() {
             let (plan, folded_usages) =
                 FilteredLeafMergeOptimizer::new(&usages, self.query_tools.query_tools())
-                    .optimize(optimized_plan);
+                    .optimize(optimized_plan)?;
+            plan.check_integrity()?;
             (plan, folded_usages.apply(usages))
         } else {
             (optimized_plan, usages)
@@ -81,10 +85,15 @@ impl TopLevelPlanner {
         };
 
         let templates = self.query_tools.plan_sql_templates(is_external)?;
+        let union_full_key_aggregate = if is_external {
+            self.request.cubestore_union_full_key_aggregate()
+        } else {
+            self.request.union_full_key_aggregate()
+        };
         let physical_plan_builder = PhysicalPlanBuilder::new(
             self.query_tools.query_tools().clone(),
             templates.clone(),
-            self.request.cubestore_union_full_key_aggregate(),
+            union_full_key_aggregate,
         );
 
         // Substitute a cube's base SQL with its `originalSql` pre-aggregation table when:

@@ -1,14 +1,14 @@
 use super::MultiStageMember;
 use crate::logical_plan::LogicalSchema;
 use crate::planner::collectors::has_multi_stage_members;
-use crate::planner::{MemberSymbol, QueryProperties};
+use crate::planner::{InputId, MemberSymbol, QueryProperties};
 use cubenativeutils::CubeError;
 use itertools::Itertools;
 use std::rc::Rc;
 
-/// One CTE in the multi-stage tree as the planner sees it: the
+/// One subquery in the multi-stage tree as the planner sees it: the
 /// `member` rendered, the `state` (`QueryProperties` snapshot for
-/// this CTE's scope), the input CTEs it depends on, and the alias
+/// this subquery's scope), the input subqueries it depends on, and the alias
 /// it will be referenced by.
 pub struct MultiStageQueryDescription {
     member: Rc<MultiStageMember>,
@@ -20,6 +20,7 @@ pub struct MultiStageQueryDescription {
     /// leaf grain — in that case `input` is rebuilt at partition grain
     /// and the original full-grain inputs move here as keys.
     keys_input: Vec<Rc<MultiStageQueryDescription>>,
+    id: InputId,
     alias: String,
 }
 
@@ -29,6 +30,7 @@ impl MultiStageQueryDescription {
         state: Rc<QueryProperties>,
         input: Vec<Rc<MultiStageQueryDescription>>,
         keys_input: Vec<Rc<MultiStageQueryDescription>>,
+        id: InputId,
         alias: String,
     ) -> Rc<Self> {
         Rc::new(Self {
@@ -36,6 +38,7 @@ impl MultiStageQueryDescription {
             state,
             input,
             keys_input,
+            id,
             alias,
         })
     }
@@ -66,6 +69,10 @@ impl MultiStageQueryDescription {
 
     pub fn member_name(&self) -> String {
         self.member_node().full_name()
+    }
+
+    pub fn id(&self) -> InputId {
+        self.id
     }
 
     pub fn alias(&self) -> &String {
@@ -129,7 +136,7 @@ impl MultiStageQueryDescription {
     }
 
     /// True if this description renders `member_node` under an
-    /// equivalent state — used to deduplicate CTEs when the same
+    /// equivalent state — used to deduplicate subqueries when the same
     /// member is reached through different paths in the dependency
     /// graph.
     pub fn is_match_member_and_state(

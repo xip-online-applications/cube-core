@@ -1,13 +1,14 @@
 mod aggregate_multiplied_subquery;
-mod full_key_aggregate;
-mod logical_join;
+mod input_base;
+mod merge;
 mod multi_stage_dimension_calculation;
 mod multi_stage_get_date_range;
 mod multi_stage_measure_calculation;
-mod multi_stage_member_type;
 mod multi_stage_rolling_window;
 mod multi_stage_time_series;
 mod pre_aggregation;
 mod query;
+mod query_inputs;
 mod query_source;
 mod root_query;
+mod subquery_body;

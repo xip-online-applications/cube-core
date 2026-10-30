@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.15](https://github.com/cube-js/cube/compare/v1.8.14...v1.8.15) (2026-10-29)
+
+### Bug Fixes
+
+- **cubestore:** Evict large cache entries first under the cache size limit ([#12428](https://github.com/cube-js/cube/issues/12428)) ([dfea982](https://github.com/cube-js/cube/commit/dfea982c3d41e9474b47472ea994ebd324edecd5))
+- **cubestore:** Persist cache LRU/LFU updates in FIFO order ([#12426](https://github.com/cube-js/cube/issues/12426)) ([b56d79f](https://github.com/cube-js/cube/commit/b56d79f72234aeb9937ee461e6f53925e09e9a47))
+- Update tzdb to 2026e for the Canadian DST changes ([#12466](https://github.com/cube-js/cube/issues/12466)) ([b837c02](https://github.com/cube-js/cube/commit/b837c02a164fc651e0f95bd5d22332edb264ee0c)), closes [#12431](https://github.com/cube-js/cube/issues/12431)
+
+## [1.8.14](https://github.com/cube-js/cube/compare/v1.8.13...v1.8.14) (2026-10-27)
+
+### Bug Fixes
+
+- **cubestore:** Accumulate cache LFU counter across TTL persists ([#12422](https://github.com/cube-js/cube/issues/12422)) ([ef88e23](https://github.com/cube-js/cube/commit/ef88e235bc88530b2629bb30b0a6489ac81592f4))
+- **cubestore:** Fix LFU decay overflow and stale TTL buffer entries ([#12432](https://github.com/cube-js/cube/issues/12432)) ([8a0a1dd](https://github.com/cube-js/cube/commit/8a0a1dd87d89c992f56834d5c6815e11e5759f6b))
+
 ## [1.8.13](https://github.com/cube-js/cube/compare/v1.8.12...v1.8.13) (2026-10-25)
 
 **Note:** Version bump only for package @cubejs-backend/cubestore
