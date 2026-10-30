@@ -885,7 +885,7 @@ export class QueryQueue {
       const timeInQueue = (new Date()).getTime() - query.addedToQueueTime;
       const tenantIdentifier = query.tenantId || 'unknown';
 
-      Tracer.init().get().timing('time_in_queue', timeInQueue, {
+      Tracer.init().get().distribution('time_in_queue', timeInQueue, {
         pod: getPodName(),
         tenant: tenantIdentifier,
       });
@@ -1028,7 +1028,7 @@ export class QueryQueue {
 
         const duration = (new Date()).getTime() - startQueryTime;
 
-        Tracer.init().get().timing('query_duration', duration, {
+        Tracer.init().get().distribution('query_duration', duration, {
           pod: getPodName(),
           tenant: tenantIdentifier,
         });
