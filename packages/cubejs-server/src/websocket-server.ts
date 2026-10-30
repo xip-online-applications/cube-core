@@ -20,6 +20,8 @@ export class WebSocketServer {
 
   protected subscriptionServer: SubscriptionServer | null = null;
 
+  protected readonly connectionIdToSocket = new Map<string, WebSocket>();
+
   public constructor(
     protected readonly serverCore: CubejsServerCore,
     protected readonly options: WebSocketServerOptions = {},
@@ -32,11 +34,11 @@ export class WebSocketServer {
       maxPayload: getEnv('maxRequestSize'),
     });
 
-    const connectionIdToSocket: Record<string, any> = {};
-
     this.subscriptionServer = this.serverCore.initSubscriptionServer(async (connectionId: string, message: any) => {
-      if (!connectionIdToSocket[connectionId]) {
-        throw new Error(`Socket for ${connectionId} is not found found`);
+      const socket = this.connectionIdToSocket.get(connectionId);
+      // A query may finish after its client disconnected; there is no one left to send the result to
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return;
       }
 
       let messageStr: string;
@@ -58,24 +60,26 @@ export class WebSocketServer {
         messageStr = JSON.stringify(message);
       }
 
-      connectionIdToSocket[connectionId].send(messageStr);
+      socket.send(messageStr);
     });
 
     this.wsServer.on('connection', (ws) => {
       const connectionId = crypto.randomBytes(8).toString('hex');
-      connectionIdToSocket[connectionId] = ws;
+      this.connectionIdToSocket.set(connectionId, ws);
+
+      // 'close' follows 'error', so this runs twice for an errored socket; both steps are idempotent
+      const cleanup = async () => {
+        this.connectionIdToSocket.delete(connectionId);
+        await this.subscriptionServer!.disconnect(connectionId);
+      };
 
       ws.on('message', async (message) => {
         await this.subscriptionServer!.processMessage(connectionId, message as string);
       });
 
-      ws.on('close', async () => {
-        await this.subscriptionServer!.disconnect(connectionId);
-      });
+      ws.on('close', cleanup);
 
-      ws.on('error', async () => {
-        await this.subscriptionServer!.disconnect(connectionId);
-      });
+      ws.on('error', cleanup);
     });
 
     const processSubscriptionsInterval = this.options.processSubscriptionsInterval || 5 * 1000;

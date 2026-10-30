@@ -9,7 +9,8 @@
     "outDir": "dist",
     "rootDir": ".",
     "allowJs": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "types": ["node", "jest"]
   },
   "references": [
     { "path": "../cubejs-backend-native" },
