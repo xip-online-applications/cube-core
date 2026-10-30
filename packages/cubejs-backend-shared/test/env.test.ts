@@ -765,7 +765,9 @@ describe('getEnv(logLevel / logSlowQueryMs / logDebugFullQuery)', () => {
   const saved = { ...process.env };
   afterEach(() => {
     for (const k of Object.keys(process.env)) {
-      if (!(k in saved)) delete process.env[k];
+      if (!(k in saved)) {
+        delete process.env[k];
+      }
     }
     Object.assign(process.env, saved);
   });
@@ -860,7 +862,9 @@ describe('getEnv(webSocketsPingInterval)', () => {
   const saved = { ...process.env };
   afterEach(() => {
     for (const k of Object.keys(process.env)) {
-      if (!(k in saved)) delete process.env[k];
+      if (!(k in saved)) {
+        delete process.env[k];
+      }
     }
     Object.assign(process.env, saved);
   });
