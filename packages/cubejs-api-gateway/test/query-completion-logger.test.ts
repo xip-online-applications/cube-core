@@ -11,7 +11,7 @@ import { CubejsHandlerError } from '../src/cubejs-handler-error';
 import { UserError } from '../src/user-error';
 
 const mockStatsd = {
-  histogram: jest.fn(),
+  distribution: jest.fn(),
   increment: jest.fn(),
   gauge: jest.fn(),
 };
@@ -711,7 +711,7 @@ describe('QueryCompletionLogger metrics', () => {
   const TAG_KEYS = ['cache', 'endpoint', 'pod', 'status', 'tenant'];
 
   beforeEach(() => {
-    mockStatsd.histogram.mockReset();
+    mockStatsd.distribution.mockReset();
     mockStatsd.increment.mockReset();
     mockStatsd.gauge.mockReset();
     mockTracerInit = jest.fn(() => ({ get: () => mockStatsd }));
@@ -732,8 +732,8 @@ describe('QueryCompletionLogger metrics', () => {
 
   it('emits duration and count with exactly the five tags', () => {
     new QueryCompletionLogger().record(input());
-    expect(mockStatsd.histogram).toHaveBeenCalledTimes(1);
-    const [name, value, tags] = mockStatsd.histogram.mock.calls[0];
+    expect(mockStatsd.distribution).toHaveBeenCalledTimes(1);
+    const [name, value, tags] = mockStatsd.distribution.mock.calls[0];
     expect(name).toBe('query.duration');
     expect(typeof value).toBe('number');
     expect(Object.keys(tags).sort()).toEqual(TAG_KEYS);
@@ -746,7 +746,7 @@ describe('QueryCompletionLogger metrics', () => {
   it('emits metrics regardless of log level', () => {
     process.env.LOG_LEVEL = 'error';
     new QueryCompletionLogger().record(input());
-    expect(mockStatsd.histogram).toHaveBeenCalledTimes(1);
+    expect(mockStatsd.distribution).toHaveBeenCalledTimes(1);
     expect(mockStatsd.increment).toHaveBeenCalledTimes(1);
   });
 
@@ -755,13 +755,13 @@ describe('QueryCompletionLogger metrics', () => {
     const tags = mockStatsd.increment.mock.calls[0][2];
     expect(tags.endpoint).toBe('run-scheduled-refresh');
     expect(tags.cache).toBe('unknown');
-    expect(mockStatsd.histogram).toHaveBeenCalledTimes(1);
+    expect(mockStatsd.distribution).toHaveBeenCalledTimes(1);
   });
 
   it('emits no metrics for SQL API internal calls', () => {
     new QueryCompletionLogger().record(input({ method: 'SQL' }));
     new QueryCompletionLogger().record(input({ method: 'INTERNAL' }));
-    expect(mockStatsd.histogram).not.toHaveBeenCalled();
+    expect(mockStatsd.distribution).not.toHaveBeenCalled();
     expect(mockStatsd.increment).not.toHaveBeenCalled();
   });
 
@@ -771,7 +771,7 @@ describe('QueryCompletionLogger metrics', () => {
     expect(() => logger.record(input())).not.toThrow();
     expect(() => logger.begin()()).not.toThrow();
     mockTracerInit = jest.fn(() => ({ get: () => ({
-      histogram: () => { throw new Error('x'); },
+      distribution: () => { throw new Error('x'); },
       increment: () => { throw new Error('x'); },
       gauge: () => { throw new Error('x'); },
     }) }));

@@ -181,18 +181,23 @@ Sent through StatsD (hot-shots) as `transai.<DD_SERVICE>.<name>`.
 
 | Name | Type | Tags | Notes |
 |---|---|---|---|
-| `query.duration` | histogram (ms) | `pod, tenant, endpoint, cache, status` | One per completed request, same moment as the completion line |
+| `query.duration` | distribution (ms) | `pod, tenant, endpoint, cache, status` | One per completed request, same moment as the completion line |
 | `queries` | count | `pod, tenant, endpoint, cache, status` | One per completed request: use `.as_rate()` for requests/s |
 | `queries_in_flight` | gauge | `pod` | Requests currently being processed; emitted at most once per second per pod (the final value is flushed) |
 | `ws.unsubscribe_unknown` | count | `pod` | Same event as the debug line, always counted |
 | `subscriptions` | gauge | `pod, tenant` | Existing; every 60 s |
 | `slow_query` | count | `pod, tenant` | Existing (orchestrator, stale-if-slow) |
-| `resultset_rows` | histogram | `pod, tenant` | Existing |
-| `time_in_queue` | timing | `pod, tenant` | Existing (query queue wait) |
-| `query_duration` | timing | `pod, tenant` | Existing (queue execution); now also tagged `pod`. Not the same metric as `query.duration` |
+| `resultset_rows` | distribution | `pod, tenant` | Existing |
+| `time_in_queue` | distribution (ms) | `pod, tenant` | Existing (query queue wait) |
+| `query_duration` | distribution (ms) | `pod, tenant` | Existing (queue execution); now also tagged `pod`. Not the same metric as `query.duration` |
 
 Notes:
 
+- `query.duration`, `resultset_rows`, `time_in_queue` and `query_duration` are DogStatsD distributions (hot-shots
+  `distribution`). They used to be sent as histogram/timing, which the Datadog Agent split into per-pod
+  `<name>.avg`, `.median`, `.max`, `.95percentile` and `.count` metrics. Those suffixed metrics are no longer
+  written: dashboards and monitors built on them (for example `query.duration.avg` or
+  `query.duration.95percentile`) must be rebuilt on the unsuffixed distribution metric.
 - `tenant` cardinality is client influenced (it comes from the security context) and is only truncated to
   128 chars, not bounded. Never tagged: `queryHash` and `cubes` (unbounded).
 - Unknown tenants are tagged `unknown`; `endpoint` is `load`, `sql`, `meta` or `run-scheduled-refresh`.
@@ -220,17 +225,16 @@ Metrics:
 | Requests/s per tenant, summed across pods | `sum:transai.<service>.queries{*} by {tenant}.as_rate()` (use `.as_count()` for totals per interval) |
 | Per tenant and endpoint | `sum:transai.<service>.queries{*} by {tenant,endpoint}.as_rate()` |
 | Concurrency (in flight) per pod | `max:transai.<service>.queries_in_flight{*} by {pod}` |
-| p95 latency per tenant and endpoint | `max:transai.<service>.query.duration.95percentile{*} by {tenant,endpoint}` (also `.avg`, `.median`, `.max`, `.count`) |
+| p95 latency per tenant and endpoint | `p95:transai.<service>.query.duration{*} by {tenant,endpoint}` (also `avg:`, `p50:`, `p99:`, `max:`, `count:`) |
 | Is one pod different from the others? | the same queries `by {pod}` (all metrics above carry `pod`) |
 | Misses vs hits (load) | `sum:transai.<service>.queries{endpoint:load} by {cache}.as_rate()` |
 | Errors | `sum:transai.<service>.queries{status:500} by {tenant}.as_rate()` (add other status codes as needed) |
 | Unknown unsubscribes | `sum:transai.<service>.ws.unsubscribe_unknown{*} by {pod}.as_rate()` |
 
-`query.duration` is sent as a plain StatsD histogram (hot-shots `histogram`). Through the Datadog Agent that
-arrives as `query.duration.avg`, `.median`, `.max`, `.95percentile` and `.count`, per pod, not as a distribution, so
-`p95:` space aggregation does not work and a max over pods of the per-pod p95 is not a true global p95. Recommended
-follow-up (code change in the completion logger, not done here): send it as `distribution`, which enables `p95:`
-across pods.
+The duration and row-count metrics are distributions, so `p50:`/`p95:`/`p99:` are true percentiles across all
+pods, and they can back distribution and heatmap widgets. Percentile aggregations (`p50` to `p99`) must be enabled
+once per metric in Datadog (Metrics Summary, the metric, "Advanced": enable percentiles); without that only
+`avg`, `min`, `max`, `sum` and `count` are available.
 
 Logs (Datadog's log pipeline may remap a `status` or `level` attribute to the log severity: the HTTP `status` field
 may need another facet or an exception in the remapper):
