@@ -1,4 +1,5 @@
 /* eslint-disable no-restricted-syntax */
+import crypto from 'crypto';
 import * as stream from 'stream';
 import { EventEmitterInterface } from '@cubejs-backend/event-emitter';
 import { assertNever } from 'assert-never';
@@ -3210,8 +3211,11 @@ class ApiGateway {
         apiType,
       });
 
+      // Only the hash is kept between ticks: storing the result itself would retain
+      // its rows (materialized by JSON.stringify) for the lifetime of the subscription
+      const resultHash = result ? this.subscriptionResultHash(result) : undefined;
       const state = await subscriptionState();
-      if (result && (!state || JSON.stringify(state.result) !== JSON.stringify(result))) {
+      if (result && (!state || state.resultHash !== resultHash)) {
         // We prepare the full final JSON result on the native side
         await res(result.message, result.opts);
       } else if (error) {
@@ -3219,12 +3223,20 @@ class ApiGateway {
         await res(error.message, error.opts);
       }
 
-      await subscribe({ error, result });
+      await subscribe({ resultHash });
     } catch (e: any) {
       this.handleError({
         e, context, query, res, requestStarted
       });
     }
+  }
+
+  /**
+   * Fingerprint used to skip resending an unchanged subscription result. Hashes the same
+   * JSON the subscription used to compare in full, so the dedupe semantics are unchanged.
+   */
+  protected subscriptionResultHash(result: { message: any, opts: any }): string {
+    return crypto.createHash('sha1').update(JSON.stringify(result)).digest('hex');
   }
 
   protected resToResultFn(res: ExpressResponse) {
