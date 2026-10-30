@@ -8,6 +8,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": ".",
+    "types": ["node", "jest"],
     "allowJs": true,
     "resolveJsonModule": true,
     "types": ["node", "jest"]

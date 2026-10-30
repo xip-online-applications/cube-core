@@ -189,6 +189,14 @@ export class SubscriptionServer {
       }
 
       authContext = await this.subscriptionStore.getAuthContext(connectionId);
+      if (!authContext && isSubscription) {
+        // A server poll for a connection without an auth context: the connection was disconnected while the
+        // previous poll was in flight and that poll's late subscribe() re-created it. Drop it quietly instead
+        // of answering 'Not authorized' (and recording an error) on every poll until the eviction
+        await this.subscriptionStore.disconnect(connectionId);
+        return;
+      }
+
       if (!authContext) {
         this.recordFailure({
           endpoint: endpointForWsMethod('method' in message ? message.method : undefined),
