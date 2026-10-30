@@ -3,8 +3,7 @@ use crate::planner::filter::tree_ops;
 use crate::planner::filter::FilterItem;
 use crate::planner::planners::multi_stage::EvaluationContext;
 use crate::planner::query_properties::member_chain_eq;
-use crate::planner::MemberSymbol;
-use crate::planner::SqlCall;
+use crate::planner::{JoinTree, JoinTreeItem, MemberSymbol, SqlCall};
 use std::rc::Rc;
 
 // A time shift moves the window a leaf's time dimension covers, and a
@@ -36,7 +35,7 @@ fn same_evaluation_context_fields(a: &EvaluationContext, b: &EvaluationContext) 
 /// That costs a shared scan the query could have had; the other direction
 /// would merge two scans that read differently.
 pub fn reads_same_rows(a: &Query, b: &Query) -> bool {
-    // `Query` and `LogicalJoin` keep their fields private, so these two cannot
+    // `Query` and `QueryInputs` keep their fields private, so these two cannot
     // be destructured the way the rest are. A field added to either has to be
     // added here by hand, or two scans that read differently start comparing
     // equal.
@@ -51,7 +50,11 @@ pub fn reads_same_rows(a: &Query, b: &Query) -> bool {
         && same_grain(a.schema(), b.schema())
         && same_filter(a.filter(), b.filter())
         && same_modifiers(a.modifers(), b.modifers())
-        && same_source(a.source(), b.source())
+        && same_source(a.source().base(), b.source().base())
+        && same_multi_stage_dimension(
+            a.source().multi_stage_dimension(),
+            b.source().multi_stage_dimension(),
+        )
 }
 
 pub fn same_members(a: &[Rc<MemberSymbol>], b: &[Rc<MemberSymbol>]) -> bool {
@@ -104,24 +107,19 @@ fn same_modifiers(a: &LogicalQueryModifiers, b: &LogicalQueryModifiers) -> bool 
         && *order_by == b.order_by
 }
 
-fn same_source(a: &QuerySource, b: &QuerySource) -> bool {
+fn same_source(a: &InputBase, b: &InputBase) -> bool {
     match (a, b) {
-        (QuerySource::LogicalJoin(a), QuerySource::LogicalJoin(b)) => same_join(a, b),
+        (InputBase::QueryInputs(a), InputBase::QueryInputs(b)) => same_inputs(a, b),
         // A pre-aggregation source is already the cheap read a shared scan
-        // aims at, and a full-key aggregate is not a leaf's source at all.
+        // aims at, and a merge is not a leaf's source at all.
         _ => false,
     }
 }
 
 // See the note on [`reads_same_rows`]: private fields, compared by hand.
-fn same_join(a: &LogicalJoin, b: &LogicalJoin) -> bool {
+fn same_inputs(a: &QueryInputs, b: &QueryInputs) -> bool {
     a.alias_prefix() == b.alias_prefix()
-        && same_root(a.root(), b.root())
-        && a.joins().len() == b.joins().len()
-        && a.joins()
-            .iter()
-            .zip(b.joins().iter())
-            .all(|(x, y)| same_join_item(x, y))
+        && same_join(a.join(), b.join())
         && a.dimension_subqueries().len() == b.dimension_subqueries().len()
         && a.dimension_subqueries()
             .iter()
@@ -134,20 +132,40 @@ fn same_join(a: &LogicalJoin, b: &LogicalJoin) -> bool {
             .all(|(x, y)| same_subquery_join(x, y))
 }
 
-fn same_root(a: &Option<Rc<Cube>>, b: &Option<Rc<Cube>>) -> bool {
+fn same_multi_stage_dimension(
+    a: &Option<MultiStageDimensionInput>,
+    b: &Option<MultiStageDimensionInput>,
+) -> bool {
     match (a, b) {
-        (Some(a), Some(b)) => same_cube(a, b),
+        (Some(a), Some(b)) => {
+            let MultiStageDimensionInput { subquery, keys } = a;
+            subquery.name() == b.subquery.name() && same_members(keys, &b.keys)
+        }
         (None, None) => true,
         _ => false,
     }
 }
 
-fn same_cube(a: &Cube, b: &Cube) -> bool {
-    a.cube_id() == b.cube_id()
+// Only what the join renders is compared. An edge's parent and relationship
+// follow from its cubes and condition; the multiplication factors depend on
+// the members each query asks for, not on the rows the join reads.
+fn same_join(a: &Option<Rc<JoinTree>>, b: &Option<Rc<JoinTree>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            a.root().cube_id() == b.root().cube_id()
+                && a.joins().len() == b.joins().len()
+                && a.joins()
+                    .iter()
+                    .zip(b.joins().iter())
+                    .all(|(x, y)| same_join_item(x, y))
+        }
+        (None, None) => true,
+        _ => false,
+    }
 }
 
-fn same_join_item(a: &LogicalJoinItem, b: &LogicalJoinItem) -> bool {
-    same_cube(a.cube(), b.cube())
+fn same_join_item(a: &JoinTreeItem, b: &JoinTreeItem) -> bool {
+    a.cube().cube_id() == b.cube().cube_id()
         && a.splits_rows() == b.splits_rows()
         && same_join_condition(a.on_sql(), b.on_sql())
 }
@@ -172,8 +190,8 @@ fn same_subquery_join(a: &LogicalSubqueryJoinItem, b: &LogicalSubqueryJoinItem) 
         && same_join_condition(on_sql, &b.on_sql)
 }
 
-// A sub-query dimension contributes a joined-in CTE of its own, so the two
-// hosts read the same rows only if those CTEs do — measures included, since
+// A sub-query dimension contributes a joined-in subquery of its own, so the two
+// hosts read the same rows only if those subqueries do — measures included, since
 // the dimension's value is one of them.
 fn same_dimension_subquery(a: &DimensionSubQuery, b: &DimensionSubQuery) -> bool {
     let DimensionSubQuery {

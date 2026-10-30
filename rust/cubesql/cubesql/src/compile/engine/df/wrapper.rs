@@ -467,9 +467,11 @@ impl ColumnRemapping {
             .fields()
             .iter()
             .map(|f| {
+                // Qualified first: join sides can project the same unqualified names
                 MemberField::regular(
                     self.column_remapping
-                        .get(&Column::from_name(f.name().to_string()))
+                        .get(&f.qualified_column())
+                        .or_else(|| self.column_remapping.get(&f.unqualified_column()))
                         .map(|x| x.name.to_string())
                         .unwrap_or(f.name().to_string()),
                 )
@@ -482,6 +484,22 @@ impl ColumnRemapping {
     pub fn remap(&self, expr: &Expr) -> result::Result<Expr, CubeError> {
         replace_col(expr.clone(), &self.column_remapping.iter().collect())
             .map_err(|_| CubeError::internal(format!("Can't rename columns for expr: {expr:?}",)))
+    }
+
+    /// Keep only the columns qualified with a qualifier of `schema`, `None` when nothing is left.
+    /// Inner qualifiers of a join side can name other relations of the join, like its from side.
+    pub fn retain_qualifiers(mut self, schema: &DFSchema) -> Option<ColumnRemapping> {
+        let qualifiers = schema
+            .fields()
+            .iter()
+            .filter_map(|f| f.qualifier())
+            .collect::<HashSet<_>>();
+        self.column_remapping.retain(|from, _| {
+            from.relation
+                .as_ref()
+                .is_some_and(|relation| qualifiers.contains(relation))
+        });
+        (!self.column_remapping.is_empty()).then_some(self)
     }
 
     pub fn extend(&mut self, other: ColumnRemapping) {
@@ -537,6 +555,9 @@ struct Remapper {
     remapping: HashMap<Column, Column>,
     used_targets: HashSet<String>,
     used_columns: HashMap<String, ColumnReferenceState>,
+    /// `{from_alias}.{name}` keys filled by a column of another relation, which a later
+    /// from-side column takes over
+    vacancy_fills: HashSet<Column>,
 }
 
 impl Remapper {
@@ -553,6 +574,7 @@ impl Remapper {
             remapping: HashMap::new(),
             used_targets: HashSet::new(),
             used_columns: HashMap::new(),
+            vacancy_fills: HashSet::new(),
         }
     }
 
@@ -642,19 +664,21 @@ impl Remapper {
             // cannot clobber the from-side column's mapping. When the source column has a
             // different relation, also keep a mapping under that original relation, so plans
             // that still reference the inner qualifier continue to resolve.
-            //
-            // NOTE: this relies on the from-side column being added before a colliding
-            // column from another relation. If the other side is added first, its vacancy
-            // fill maps `{from_alias}.{name}` to its own target, and a later add of the
-            // actual from-side column short-circuits on that entry in `add_column`/`add_expr`,
-            // returning the other side's alias. Callers iterate the from side's columns
-            // before joined sides' ones, preserving this invariant.
+            // Vacancy fills by another relation's column are tracked when columns can be renamed,
+            // so a later from-side column gets its own alias in `add_column`/`add_expr`.
             let from_alias_column = Column {
                 name: original_column.name.clone(),
                 relation: Some(from_alias.clone()),
             };
             let original_is_from_side = original_column.relation.as_ref() == Some(from_alias);
-            if original_is_from_side || !self.remapping.contains_key(&from_alias_column) {
+            if original_is_from_side {
+                self.vacancy_fills.remove(&from_alias_column);
+                self.remapping
+                    .insert(from_alias_column, target_column.clone());
+            } else if !self.remapping.contains_key(&from_alias_column) {
+                if self.can_rename_columns && original_column.relation.is_some() {
+                    self.vacancy_fills.insert(from_alias_column.clone());
+                }
                 self.remapping
                     .insert(from_alias_column, target_column.clone());
             }
@@ -668,8 +692,10 @@ impl Remapper {
     }
 
     pub fn add_column(&mut self, column: &Column) -> result::Result<String, CubeError> {
-        if let Some(alias_column) = self.remapping.get(column) {
-            return Ok(alias_column.name.clone());
+        if !self.vacancy_fills.contains(column) {
+            if let Some(alias_column) = self.remapping.get(column) {
+                return Ok(alias_column.name.clone());
+            }
         }
 
         let new_alias = self.new_alias(&column.name, None)?;
@@ -695,8 +721,10 @@ impl Remapper {
         } else {
             Column::from_name(&original_alias)
         };
-        if let Some(alias_column) = self.remapping.get(&original_alias_key) {
-            return Ok(alias_column.name.clone());
+        if !self.vacancy_fills.contains(&original_alias_key) {
+            if let Some(alias_column) = self.remapping.get(&original_alias_key) {
+                return Ok(alias_column.name.clone());
+            }
         }
 
         let start_from = expr_name(&expr, &schema)?;
@@ -4708,8 +4736,11 @@ impl WrappedSelectNode {
                 // TODO expect returned from_alias to be fine, but still need to remap it from original alias somewhere in generate_sql_for_node
 
                 // grouped join subquery can have its columns remapped, and expressions current node can reference original columns
+                let subq_remapping = subq_sql
+                    .column_remapping
+                    .and_then(|remapping| remapping.retain_qualifiers(lp.schema()));
                 column_remapping = {
-                    match (column_remapping, subq_sql.column_remapping) {
+                    match (column_remapping, subq_remapping) {
                         (None, None) => None,
                         (None, Some(remapping)) | (Some(remapping), None) => Some(remapping),
                         (Some(mut left), Some(right)) => {
@@ -5127,6 +5158,8 @@ impl WrappedSelectNode {
             // Merge remapping from join subquery before rendering join condition:
             // condition can reference columns from both sides of the join,
             // and those columns can be remapped in respective inputs
+            let join_column_remapping = join_column_remapping
+                .and_then(|remapping| remapping.retain_qualifiers(join_plan.schema()));
             if let Some(join_column_remapping) = join_column_remapping {
                 if let Some(column_remapping) = column_remapping.as_mut() {
                     column_remapping.extend(join_column_remapping);

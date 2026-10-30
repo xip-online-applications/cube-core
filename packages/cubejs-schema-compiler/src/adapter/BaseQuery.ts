@@ -167,6 +167,7 @@ export type BaseQueryOptions = {
   multiStageLeafMerge?: boolean;
   cubestoreSupportMultistage?: boolean;
   cubestoreUnionFullKeyAggregate?: boolean;
+  unionFullKeyAggregate?: boolean;
   maxMultiStageDepth?: number;
   maxMultiStageStages?: number;
   maxMemberResolutionDepth?: number;
@@ -1178,6 +1179,7 @@ export class BaseQuery {
       cubestoreSupportMultistage: this.options.cubestoreSupportMultistage ?? getEnv('cubeStoreRollingWindowJoin'),
       multiStageLeafMerge: this.options.multiStageLeafMerge ?? getEnv('tesseractMultiStageLeafMerge'),
       cubestoreUnionFullKeyAggregate: this.options.cubestoreUnionFullKeyAggregate ?? getEnv('tesseractCubeStoreUnionFullKeyAggregate'),
+      unionFullKeyAggregate: this.options.unionFullKeyAggregate ?? this.unionFullKeyAggregateEnabled(),
       maxMultiStageDepth: this.options.maxMultiStageDepth ?? getEnv('maxMultiStageDepth'),
       maxMultiStageStages: this.options.maxMultiStageStages ?? getEnv('maxMultiStageStages'),
       maxMemberResolutionDepth: this.options.maxMemberResolutionDepth ?? getEnv('maxMemberResolutionDepth'),
@@ -4888,6 +4890,11 @@ export class BaseQuery {
 
   public preAggregationAllowUngroupingWithPrimaryKey(_cube: string, _preAggregation: PreAggregationDefinitionExtended): boolean {
     return false;
+  }
+
+  // Takes effect only for a dialect whose templates define `tesseract.full_key_aggregate_union_null`.
+  protected unionFullKeyAggregateEnabled(): boolean {
+    return true;
   }
 
   public sqlTemplates(): any {

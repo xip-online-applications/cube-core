@@ -1,11 +1,14 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { EventEmitter } from 'events';
-import { QueryOrchestrator } from '../../src/orchestrator/QueryOrchestrator';
+import type { DownloadTableData, IndexesSQL, TableStructure } from '@cubejs-backend/base-driver';
+import { QueryOrchestrator, QueryOrchestratorOptions } from '../../src/orchestrator/QueryOrchestrator';
+import { PreAggregationDescription, PreAggregationQueryKey } from '../../src/orchestrator/PreAggregations';
+import { QueryWithParams } from '../../src/orchestrator/QueryCache';
+import { asDriver } from './mocks';
 
 class MockDriver {
-  public tablesObj: any[] = [];
+  public tablesObj: { tableName: string }[] = [];
 
-  public executedQueries: any[] = [];
+  public executedQueries: string[] = [];
 
   public droppedTables: string[] = [];
 
@@ -14,33 +17,33 @@ class MockDriver {
   public schema: string | undefined;
 
   public get tables(): string[] {
-    return this.tablesObj.map(t => t.tableName || t);
+    return this.tablesObj.map(t => t.tableName);
   }
 
-  public query(query: any, _params?: any): any {
+  public query(query: string, _params?: unknown[]): Promise<unknown[]> & { cancel?: () => void } {
     this.executedQueries.push(query);
 
     if (typeof query !== 'string') {
       return Promise.resolve([]);
     }
 
-    let promise: any = Promise.resolve([query]);
+    let promise: Promise<unknown[]> & { cancel?: () => void } = Promise.resolve([query]);
 
     if (query.match(/^SELECT NOW\(\)$/)) {
       promise = promise.then(() => [{ now: new Date().toJSON() }]);
     }
 
-    promise.cancel = () => undefined;
+    promise.cancel = (): void => undefined;
     return promise;
   }
 
   public async getTablesQuery(schema: string) {
     return this.tablesObj
-      .filter(t => (t.tableName || t).split('.')[0] === schema)
-      .map(t => ({ table_name: (t.tableName || t).replace(`${schema}.`, '') }));
+      .filter(t => t.tableName.split('.')[0] === schema)
+      .map(t => ({ table_name: t.tableName.replace(`${schema}.`, '') }));
   }
 
-  public async createSchemaIfNotExists(schema: string) {
+  public async createSchemaIfNotExists(schema: string): Promise<null> {
     this.schema = schema;
     return null;
   }
@@ -52,7 +55,7 @@ class MockDriver {
 
   public async dropTable(tableName: string) {
     this.droppedTables.push(tableName);
-    this.tablesObj = this.tablesObj.filter(t => (t.tableName || t) !== tableName);
+    this.tablesObj = this.tablesObj.filter(t => t.tableName !== tableName);
   }
 
   public async downloadTable(table: string) {
@@ -81,7 +84,7 @@ type ImportBehavior = 'ok' | 'fail' | 'hang' | 'fail-cleanup';
  * build already looks like a complete one from the outside.
  */
 class ExternalMockDriver extends MockDriver {
-  public indexes: any[] = [];
+  public indexes: IndexesSQL = [];
 
   public importBehavior: ImportBehavior = 'ok';
 
@@ -98,7 +101,7 @@ class ExternalMockDriver extends MockDriver {
     });
   }
 
-  public async uploadTableWithIndexes(table: string, columns: any, tableData: any, indexesSql: any[]) {
+  public async uploadTableWithIndexes(table: string, columns: TableStructure, tableData: DownloadTableData, indexesSql: IndexesSQL) {
     // CREATE TABLE: the versioned table is registered and queryable from now on
     this.tablesObj.push({ tableName: table.substring(0, 100) });
     this.importStartedResolve();
@@ -134,7 +137,7 @@ class ExternalMockDriver extends MockDriver {
   }
 }
 
-const PRE_AGGREGATION = {
+const PRE_AGGREGATION: Partial<PreAggregationDescription> = {
   preAggregationsSchema: 'stb_pre_aggregations',
   tableName: 'stb_pre_aggregations.orders_month',
   preAggregationId: 'orders.month',
@@ -155,9 +158,9 @@ const PRE_AGGREGATION = {
 
 const jobQuery = (requestId: string) => ({
   // The jobs API posts a build query without `query`
-  values: [],
-  cacheKeyQueries: { queries: [] },
-  preAggregations: [PRE_AGGREGATION],
+  values: [] as string[],
+  cacheKeyQueries: { queries: [] as QueryWithParams[] },
+  preAggregations: [PRE_AGGREGATION as PreAggregationDescription],
   continueWait: true,
   renewQuery: true,
   requestId,
@@ -194,11 +197,11 @@ describe('pre-aggregation build jobs', () => {
     externalMockDriver = new ExternalMockDriver();
 
     const prefix = `PRE_AGG_JOBS_TEST_${testCount++}`;
-    const driverFactory = () => mockDriver;
-    const logger = () => undefined;
+    const driverFactory = () => asDriver(mockDriver);
+    const logger = (): void => undefined;
 
-    const options = {
-      externalDriverFactory: () => externalMockDriver,
+    const options: QueryOrchestratorOptions = {
+      externalDriverFactory: () => asDriver(externalMockDriver),
       queryCacheOptions: {
         queueOptions: () => ({ concurrency: 2, processUid: 'p1' }),
       },
@@ -209,14 +212,14 @@ describe('pre-aggregation build jobs', () => {
       },
     };
 
-    orchestrator = new QueryOrchestrator(prefix, driverFactory as any, logger, new EventEmitter(), options as any);
-    orchestratorExternalRefresh = new QueryOrchestrator(prefix, driverFactory as any, logger, new EventEmitter(), {
+    orchestrator = new QueryOrchestrator(prefix, driverFactory, logger, new EventEmitter(), options);
+    orchestratorExternalRefresh = new QueryOrchestrator(prefix, driverFactory, logger, new EventEmitter(), {
       ...options,
       preAggregationsOptions: {
         ...options.preAggregationsOptions,
         externalRefresh: true,
       },
-    } as any);
+    });
   });
 
   afterEach(async () => {
@@ -224,7 +227,7 @@ describe('pre-aggregation build jobs', () => {
     await orchestratorExternalRefresh.cleanup();
   });
 
-  const pollUntilSettled = async (requestId: string, targetTableName: string, queryKey: any) => {
+  const pollUntilSettled = async (requestId: string, targetTableName: string, queryKey: PreAggregationQueryKey) => {
     let status = 'processing';
 
     await waitFor(async () => {
@@ -252,21 +255,21 @@ describe('pre-aggregation build jobs', () => {
         query: 'SELECT * FROM stb_pre_aggregations.orders_month',
         values: [],
         cacheKeyQueries: { queries: [] },
-        preAggregations: [PRE_AGGREGATION],
+        preAggregations: [PRE_AGGREGATION as PreAggregationDescription],
         requestId: 'externalRefresh regular query',
         external: true,
-      } as any)
+      })
     ).rejects.toThrow(/refresh worker/);
 
     expect(externalMockDriver.tables.length).toEqual(0);
 
-    await orchestratorExternalRefresh.fetchQuery(jobQuery('externalRefresh job query') as any);
+    await orchestratorExternalRefresh.fetchQuery(jobQuery('externalRefresh job query'));
 
     await waitFor(() => externalMockDriver.indexes.length > 0);
   });
 
   test('completed jobs-API build is reported as done', async () => {
-    const result = await orchestrator.fetchQuery(jobQuery('successful job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('successful job query'));
     const [{ targetTableName, queryKey }] = result;
 
     await waitFor(() => externalMockDriver.indexes.length > 0);
@@ -294,10 +297,10 @@ describe('pre-aggregation build jobs', () => {
       query: 'SELECT * FROM stb_pre_aggregations.orders_month',
       values: [],
       cacheKeyQueries: { queries: [] },
-      preAggregations: [PRE_AGGREGATION],
+      preAggregations: [PRE_AGGREGATION as PreAggregationDescription],
       requestId: 'regular query build',
       external: true,
-    } as any).catch(() => undefined);
+    }).catch((): void => undefined);
 
     await externalMockDriver.importStarted;
     const [targetTableName] = externalMockDriver.tables;
@@ -320,7 +323,7 @@ describe('pre-aggregation build jobs', () => {
   test('in-flight jobs-API build is not reported as done', async () => {
     externalMockDriver.importBehavior = 'hang';
 
-    const result = await orchestrator.fetchQuery(jobQuery('in-flight job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('in-flight job query'));
     const [{ targetTableName, queryKey }] = result;
 
     await externalMockDriver.importStarted;
@@ -346,7 +349,7 @@ describe('pre-aggregation build jobs', () => {
   test('cleanup failure after the rows landed is not reported as failure', async () => {
     externalMockDriver.importBehavior = 'fail-cleanup';
 
-    const result = await orchestrator.fetchQuery(jobQuery('cleanup failure job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('cleanup failure job query'));
     const [{ targetTableName, queryKey }] = result;
 
     // The listing that orphaned tables cleanup runs right after the upload fails
@@ -369,7 +372,7 @@ describe('pre-aggregation build jobs', () => {
   test('failed jobs-API build is reported as failure', async () => {
     externalMockDriver.importBehavior = 'fail';
 
-    const result = await orchestrator.fetchQuery(jobQuery('failing job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('failing job query'));
     const [{ targetTableName, queryKey }] = result;
 
     await externalMockDriver.importStarted;
@@ -383,7 +386,7 @@ describe('pre-aggregation build jobs', () => {
   test('failure status survives repeated status polls', async () => {
     externalMockDriver.importBehavior = 'fail';
 
-    const result = await orchestrator.fetchQuery(jobQuery('repeated poll job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('repeated poll job query'));
     const [{ targetTableName, queryKey }] = result;
 
     await externalMockDriver.importStarted;
@@ -405,7 +408,7 @@ describe('pre-aggregation build jobs', () => {
   // A build whose process is gone never reports an outcome of its own, and the
   // job must not be left waiting on it until the record expires.
   test('abandoned build is reported as failure', async () => {
-    const result = await orchestrator.fetchQuery(jobQuery('abandoned job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('abandoned job query'));
     const [{ targetTableName, queryKey }] = result;
 
     await waitFor(() => externalMockDriver.indexes.length > 0);
@@ -433,7 +436,7 @@ describe('pre-aggregation build jobs', () => {
   // dependency that is already up to date never runs a build and never records
   // an outcome. Its job still has to report the partition as built.
   test('partition that exists without a recorded build is reported as done', async () => {
-    const result = await orchestrator.fetchQuery(jobQuery('dependency job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('dependency job query'));
     const [{ queryKey }] = result;
 
     await waitFor(() => externalMockDriver.indexes.length > 0);
@@ -459,7 +462,7 @@ describe('pre-aggregation build jobs', () => {
   test('failed external import drops the partially built table', async () => {
     externalMockDriver.importBehavior = 'fail';
 
-    const result = await orchestrator.fetchQuery(jobQuery('dropping job query') as any);
+    const result = await orchestrator.fetchQuery(jobQuery('dropping job query'));
     const [{ targetTableName }] = result;
 
     await waitFor(() => externalMockDriver.droppedTables.includes(targetTableName));
