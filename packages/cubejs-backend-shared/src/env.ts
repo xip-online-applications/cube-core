@@ -426,6 +426,9 @@ const variables: Record<string, (...args: any) => any> = {
   rollupOnlyMode: () => get('CUBEJS_ROLLUP_ONLY')
     .default('false')
     .asBoolStrict(),
+  sqlIncludeTraceId: () => get('CUBEJS_SQL_INCLUDE_TRACE_ID')
+    .default('false')
+    .asBoolStrict(),
   schemaPath: () => get('CUBEJS_SCHEMA_PATH')
     .default('model')
     .asString(),
@@ -577,6 +580,9 @@ const variables: Record<string, (...args: any) => any> = {
     .default('true')
     .asBoolStrict(),
   tesseractCubeStoreUnionFullKeyAggregate: () => get('CUBEJS_TESSERACT_CUBESTORE_UNION_FULL_KEY_AGGREGATE')
+    .default('true')
+    .asBoolStrict(),
+  tesseractTrinoUnionFullKeyAggregate: () => get('CUBEJS_TESSERACT_TRINO_UNION_FULL_KEY_AGGREGATE')
     .default('true')
     .asBoolStrict(),
   transpilationWorkerThreads: () => {
@@ -2359,7 +2365,7 @@ const variables: Record<string, (...args: any) => any> = {
     .asInt(),
   convertTzForRawTimeDimension: () => get('CUBESQL_SQL_PUSH_DOWN').default('true').asBoolStrict(),
   // Read by cubesql too: whether pushed down SQL may read Cube Store pre-aggregations
-  sqlPushDownPreAggregations: () => get('CUBESQL_SQL_PUSH_DOWN_PRE_AGGREGATIONS').default('false').asBoolStrict(),
+  sqlPushDownPreAggregations: () => get('CUBESQL_SQL_PUSH_DOWN_PRE_AGGREGATIONS').default('true').asBoolStrict(),
   // Deprecated section
 
   // Support for Redis as queue & cache driver was removed in 0.36

@@ -765,7 +765,9 @@ describe('getEnv(logLevel / logSlowQueryMs / logDebugFullQuery)', () => {
   const saved = { ...process.env };
   afterEach(() => {
     for (const k of Object.keys(process.env)) {
-      if (!(k in saved)) delete process.env[k];
+      if (!(k in saved)) {
+        delete process.env[k];
+      }
     }
     Object.assign(process.env, saved);
   });
@@ -853,5 +855,28 @@ describe('getEnv(logLevel / logSlowQueryMs / logDebugFullQuery)', () => {
   ])('LOG_DEBUG_FULL_QUERY %j resolves to %s without throwing', (raw, expected) => {
     process.env.LOG_DEBUG_FULL_QUERY = raw;
     expect(getEnv('logDebugFullQuery')).toBe(expected);
+  });
+});
+
+describe('getEnv(sqlIncludeTraceId)', () => {
+  afterEach(() => {
+    delete process.env.CUBEJS_SQL_INCLUDE_TRACE_ID;
+  });
+
+  test('defaults to off', () => {
+    expect(getEnv('sqlIncludeTraceId')).toBe(false);
+  });
+
+  test('sqlIncludeTraceId', () => {
+    process.env.CUBEJS_SQL_INCLUDE_TRACE_ID = 'true';
+    expect(getEnv('sqlIncludeTraceId')).toBe(true);
+
+    process.env.CUBEJS_SQL_INCLUDE_TRACE_ID = 'false';
+    expect(getEnv('sqlIncludeTraceId')).toBe(false);
+  });
+
+  test('rejects a non-boolean value', () => {
+    process.env.CUBEJS_SQL_INCLUDE_TRACE_ID = 'yes';
+    expect(() => getEnv('sqlIncludeTraceId')).toThrow();
   });
 });

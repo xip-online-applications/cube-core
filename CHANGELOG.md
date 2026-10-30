@@ -3,6 +3,48 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.15](https://github.com/cube-js/cube/compare/v1.8.14...v1.8.15) (2026-10-29)
+
+### Bug Fixes
+
+- **backend-native:** Bump neon to 1.1.2 to stop leaking N-API async work, thanks [@cavi21](https://github.com/cavi21) ([#12461](https://github.com/cube-js/cube/issues/12461)) ([62dbc3f](https://github.com/cube-js/cube/commit/62dbc3f9a92c8b449638cdcfbe1241feae364590)), closes [neon-bindings/neon#1145](https://github.com/neon-bindings/neon/issues/1145)
+- **cube-cli:** Install the newest release that ships this platform's binary ([#12435](https://github.com/cube-js/cube/issues/12435)) ([5104854](https://github.com/cube-js/cube/commit/510485460b84b96a633e7f4c570645dd6d470151)), closes [#11426](https://github.com/cube-js/cube/issues/11426)
+- **cubesql:** Keep from-side aliases when joined side is projected first ([#12465](https://github.com/cube-js/cube/issues/12465)) ([ce8e469](https://github.com/cube-js/cube/commit/ce8e4696df199ea9489bc2ee69962c838ee08ac3))
+- **cubesql:** Keep grouping dimensions when pushing projection into CubeScan ([#12463](https://github.com/cube-js/cube/issues/12463)) ([78b746a](https://github.com/cube-js/cube/commit/78b746aa45d4f29df96e77736ef30b8c7410dd07))
+- **cubesql:** Keep join side of same-named columns when dropping projections ([#12456](https://github.com/cube-js/cube/issues/12456)) ([8827668](https://github.com/cube-js/cube/commit/882766810067650a8b56f1681ca47dd67784e450)), closes [cube-js/arrow-datafusion#231](https://github.com/cube-js/arrow-datafusion/issues/231)
+- **cubesql:** Keep join side remapping to its own qualifiers ([#12464](https://github.com/cube-js/cube/issues/12464)) ([56e54af](https://github.com/cube-js/cube/commit/56e54af0fbd4205959793f53a556d501cd449fcb))
+- **cubesql:** Keep order members when pushing projection into limited CubeScan ([#12359](https://github.com/cube-js/cube/issues/12359)) ([8a9fffc](https://github.com/cube-js/cube/commit/8a9fffc9e52f1a0db6ce4b2bf927145566653736))
+- **cubesql:** Map same-named join side columns to their own aliases ([#12455](https://github.com/cube-js/cube/issues/12455)) ([5701a81](https://github.com/cube-js/cube/commit/5701a81f3f77e7a5d350fac607c81d631276ffff))
+- **cubesql:** Plan Metabase CAST(CAST(col AS date) AS timestamp) as date_trunc ([#12252](https://github.com/cube-js/cube/issues/12252)) ([9e579ae](https://github.com/cube-js/cube/commit/9e579ae76200712961e8d2e2fdab8b5462cd964c))
+- **cubesql:** Push down filter over join of grouped subqueries ([#12452](https://github.com/cube-js/cube/issues/12452)) ([b368c56](https://github.com/cube-js/cube/commit/b368c56db816b925d0c86e2105d91e500a5d5457))
+- **cubesql:** Return NULL from variance with too few values ([#12453](https://github.com/cube-js/cube/issues/12453)) ([f5c727a](https://github.com/cube-js/cube/commit/f5c727a5606f327e768d152f9c59546933cd0cb9))
+- **cubestore:** Evict large cache entries first under the cache size limit ([#12428](https://github.com/cube-js/cube/issues/12428)) ([dfea982](https://github.com/cube-js/cube/commit/dfea982c3d41e9474b47472ea994ebd324edecd5))
+- **cubestore:** Persist cache LRU/LFU updates in FIFO order ([#12426](https://github.com/cube-js/cube/issues/12426)) ([b56d79f](https://github.com/cube-js/cube/commit/b56d79f72234aeb9937ee461e6f53925e09e9a47))
+- **query-orchestrator:** Don't serve another query's cached result to the same request, retain coalesced queue results ([#12436](https://github.com/cube-js/cube/issues/12436)) ([9a0064a](https://github.com/cube-js/cube/commit/9a0064a445b09023ff4a5cdd29b359c56da2954c)), closes [#12028](https://github.com/cube-js/cube/issues/12028) [#10489](https://github.com/cube-js/cube/issues/10489) [#12028](https://github.com/cube-js/cube/issues/12028) [#11481](https://github.com/cube-js/cube/issues/11481)
+- Update tzdb to 2026e for the Canadian DST changes ([#12466](https://github.com/cube-js/cube/issues/12466)) ([b837c02](https://github.com/cube-js/cube/commit/b837c02a164fc651e0f95bd5d22332edb264ee0c)), closes [#12431](https://github.com/cube-js/cube/issues/12431)
+
+### Features
+
+- **cubesql:** Enable SQL pushdown to pre-aggregations by default ([#12445](https://github.com/cube-js/cube/issues/12445)) ([b20eb0c](https://github.com/cube-js/cube/commit/b20eb0cb07f4c56b0458cd26a03f27b4df9a62ff))
+- **cubesql:** Support more dateparts in DATEDIFF ([#12360](https://github.com/cube-js/cube/issues/12360)) ([fc385d1](https://github.com/cube-js/cube/commit/fc385d132ace37e4726149fcaf15172bf7ad3716))
+- **query-orchestrator:** add trace_id SQL comment to data source queries ([#11376](https://github.com/cube-js/cube/issues/11376)) ([badd350](https://github.com/cube-js/cube/commit/badd350d903ba02f0825fd138cccb522546eff6d))
+- **snowflake-driver:** Tag queries with request id via QUERY_TAG ([#12458](https://github.com/cube-js/cube/issues/12458)) ([ef9d9e5](https://github.com/cube-js/cube/commit/ef9d9e536e355d82dd93aafc408d76552859020e))
+
+## [1.8.14](https://github.com/cube-js/cube/compare/v1.8.13...v1.8.14) (2026-10-27)
+
+### Bug Fixes
+
+- **client-core:** Throw RequestError for a 200 response that isn't a load response ([#12418](https://github.com/cube-js/cube/issues/12418)) ([75807a1](https://github.com/cube-js/cube/commit/75807a19253b531508605c0bbe05001a49ef225d)), closes [#6149](https://github.com/cube-js/cube/issues/6149)
+- **cubestore:** Accumulate cache LFU counter across TTL persists ([#12422](https://github.com/cube-js/cube/issues/12422)) ([ef88e23](https://github.com/cube-js/cube/commit/ef88e235bc88530b2629bb30b0a6489ac81592f4))
+- **cubestore:** Fix LFU decay overflow and stale TTL buffer entries ([#12432](https://github.com/cube-js/cube/issues/12432)) ([8a0a1dd](https://github.com/cube-js/cube/commit/8a0a1dd87d89c992f56834d5c6815e11e5759f6b))
+- **query-orchestrator:** Make query cancel handles unique across nodes ([#12245](https://github.com/cube-js/cube/issues/12245)) ([11f99cd](https://github.com/cube-js/cube/commit/11f99cd9d9270577ca4962aade197e9de770d518))
+- **tesseract:** Join multi-stage dimension CTEs as explicit query inputs ([#12401](https://github.com/cube-js/cube/issues/12401)) ([091be13](https://github.com/cube-js/cube/commit/091be1334e859cb95bc71247956a9c86095aa621))
+- **tesseract:** Serve ungrouped queries from rollupLambda ([#12417](https://github.com/cube-js/cube/issues/12417)) ([e17d5a1](https://github.com/cube-js/cube/commit/e17d5a138d268948848e15a33323663dee97b6bf))
+
+### Features
+
+- **tesseract:** Combine multi-stage results with UNION ALL on Trino ([#12425](https://github.com/cube-js/cube/issues/12425)) ([f37f2d1](https://github.com/cube-js/cube/commit/f37f2d16546c481e98d39dc1799b0b2e8b4486f0))
+
 ## [1.8.13](https://github.com/cube-js/cube/compare/v1.8.12...v1.8.13) (2026-10-25)
 
 ### Bug Fixes

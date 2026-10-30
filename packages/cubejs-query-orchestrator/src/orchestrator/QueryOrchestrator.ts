@@ -7,11 +7,19 @@ import {
   QuerySchemasResult,
   QueryTablesResult,
   QueryColumnsResult,
-  QueryKey
+  QueryKey,
+  QueryStageStateResponse
 } from '@cubejs-backend/base-driver';
+import type { QueryDef } from '@cubejs-backend/base-driver';
 
-import { QueryCache, Query, QueryBody, TempTable, QueryWithParams, CacheKey } from './QueryCache';
-import { PreAggregations, PreAggregationDescription, getLastUpdatedAtTimestamp } from './PreAggregations';
+import { QueryCache, Query, QueryBody, TempTable, QueryWithParams, CacheKey, QueryCacheOptions } from './QueryCache';
+import {
+  PreAggregations,
+  PreAggregationDescription,
+  PreAggregationsOptions,
+  VersionEntry,
+  getLastUpdatedAtTimestamp
+} from './PreAggregations';
 import { DriverFactory, DriverFactoryByDataSource } from './DriverFactory';
 import { QueryStream } from './QueryStream';
 
@@ -32,8 +40,8 @@ export enum MetadataOperationType {
 export interface QueryOrchestratorOptions {
   externalDriverFactory?: DriverFactory;
   cacheAndQueueDriver?: CacheAndQueryDriverType;
-  queryCacheOptions?: any;
-  preAggregationsOptions?: any;
+  queryCacheOptions?: Partial<QueryCacheOptions>;
+  preAggregationsOptions?: Partial<PreAggregationsOptions>;
   rollupOnlyMode?: boolean;
   continueWaitTimeout?: number;
   skipExternalCacheAndQueue?: boolean;
@@ -293,9 +301,9 @@ export class QueryOrchestrator {
   }
 
   public async queryStage(queryBody: QueryBody) {
-    const preAggregationsQueryStageStateByDataSource = {};
+    const preAggregationsQueryStageStateByDataSource: Record<string, Promise<QueryStageStateResponse>> = {};
 
-    const preAggregationsQueryStageState = async (dataSource) => {
+    const preAggregationsQueryStageState = async (dataSource: string) => {
       if (!preAggregationsQueryStageStateByDataSource[dataSource]) {
         const queue = await this.preAggregations.getQueue(dataSource);
         preAggregationsQueryStageStateByDataSource[dataSource] = queue.fetchQueryStageState();
@@ -359,7 +367,8 @@ export class QueryOrchestrator {
   }
 
   public async getPreAggregationVersionEntries(
-    preAggregations: { preAggregation: any, partitions: any[] }[],
+    // any: schema-compiler's PreAggregationInfo, which this package cannot import
+    preAggregations: { preAggregation: any, partitions: PreAggregationDescription[] }[],
     preAggregationsSchema: string,
     requestId: string,
   ) {
@@ -374,11 +383,11 @@ export class QueryOrchestrator {
       requestId
     );
 
-    const flatFn = (arrResult: any[], arrItem: any[]) => ([...arrResult, ...arrItem]);
+    const flatFn = <T>(arrResult: T[], arrItem: T[]): T[] => ([...arrResult, ...arrItem]);
     const structureVersionsByTableName = preAggregations
       .map(p => p.partitions)
       .reduce(flatFn, [])
-      .reduce((obj, partition) => {
+      .reduce<Record<string, string>>((obj, partition) => {
         if (partition) {
           obj[partition.tableName] = PreAggregations.structureVersion(partition);
         }
@@ -393,7 +402,7 @@ export class QueryOrchestrator {
           const structureVersion = structureVersionsByTableName[versionEntry.table_name];
           return structureVersion && versionEntry.structure_version === structureVersion;
         })
-        .reduce((obj, versionEntry) => {
+        .reduce<Record<string, VersionEntry[]>>((obj, versionEntry) => {
           if (!obj[versionEntry.table_name]) {
             obj[versionEntry.table_name] = [];
           }
@@ -440,7 +449,7 @@ export class QueryOrchestrator {
   }
 
   public async cancelQueryByRequestId(requestId: string) {
-    const cancelled = [];
+    const cancelled: QueryDef[] = [];
 
     for (const queue of Object.values(this.queryCache.getQueues())) {
       cancelled.push(...await queue.cancelQueryByRequestId(requestId));
@@ -457,7 +466,7 @@ export class QueryOrchestrator {
     return this.preAggregations.updateRefreshEndReached();
   }
 
-  private createMetadataQuery(operation: string, params: Record<string, any>): QueryWithParams {
+  private createMetadataQuery(operation: string, params: Record<string, unknown>): QueryWithParams {
     return [
       `METADATA:${operation}`,
       // TODO (@MikeNitsenko): Metadata queries need object params like [{ schema, table }]
@@ -469,7 +478,7 @@ export class QueryOrchestrator {
 
   private async queryDataSourceMetadata<T>(
     operation: MetadataOperationType,
-    params: Record<string, any>,
+    params: Record<string, unknown>,
     dataSource: string = 'default',
     options: {
       requestId?: string;
