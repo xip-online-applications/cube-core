@@ -7,7 +7,8 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use chrono::format::{Fixed, Item, Numeric, Pad};
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, LocalResult, NaiveDateTime, Offset, TimeZone};
+use chrono_tz::Tz;
 use indexmap::{Equivalent, IndexMap};
 use itertools::multizip;
 use serde::{
@@ -195,36 +196,154 @@ const NAIVE_FORMATS: &[&str] = &[
     "%Y-%m-%d %H:%M:%S%.f %Z",
 ];
 
-fn parse_time_string(s: &str) -> Option<String> {
-    // Explicit offsets are applied: the output is always UTC.
+/// Parses a time string. Explicit offsets are applied, so the result is always UTC; a value
+/// without an offset is taken as is.
+fn parse_time_string(s: &str) -> Option<NaiveDateTime> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.naive_utc().format(TIME_OUTPUT_FORMAT).to_string());
+        return Some(dt.naive_utc());
     }
 
     for format in OFFSET_AWARE_FORMATS {
         if let Ok(dt) = DateTime::parse_from_str(s, format) {
-            return Some(dt.naive_utc().format(TIME_OUTPUT_FORMAT).to_string());
+            return Some(dt.naive_utc());
         }
     }
 
-    for format in NAIVE_FORMATS {
-        if let Ok(dt) = NaiveDateTime::parse_from_str(s, format) {
-            return Some(
-                Utc.from_utc_datetime(&dt)
-                    .format(TIME_OUTPUT_FORMAT)
-                    .to_string(),
-            );
+    NAIVE_FORMATS
+        .iter()
+        .find_map(|format| NaiveDateTime::parse_from_str(s, format).ok())
+}
+
+/// How a `time` value is rendered in the result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeOutput {
+    /// `YYYY-MM-DDTHH:mm:ss.SSS` without an offset (the default).
+    #[default]
+    Naive,
+    /// The value is a UTC instant: `YYYY-MM-DDTHH:mm:ss.SSSZ`.
+    Utc,
+    /// The value is wall-clock time in this zone (a time dimension with a granularity, which the
+    /// SQL converts to the query timezone): `YYYY-MM-DDTHH:mm:ss.SSS±HH:MM`.
+    Local(Tz),
+}
+
+impl TimeOutput {
+    fn format(self, dt: &NaiveDateTime) -> DBResponsePrimitive {
+        let rendered = match self {
+            TimeOutput::Naive => dt.format(TIME_OUTPUT_FORMAT).to_string(),
+            TimeOutput::Utc => format!("{}Z", dt.format(TIME_OUTPUT_FORMAT)),
+            TimeOutput::Local(tz) => {
+                let offset = match tz.offset_from_local_datetime(dt) {
+                    LocalResult::Single(offset) => offset,
+                    // DST fall-back: the wall-clock time occurs twice, take the earlier instant.
+                    LocalResult::Ambiguous(earliest, _) => earliest,
+                    // DST spring-forward gap: the wall-clock time does not exist. Keep it (it is
+                    // what the database returned and what clients match on) and use the offset in
+                    // effect around that moment.
+                    LocalResult::None => tz.offset_from_utc_datetime(dt),
+                };
+                format!("{}{}", dt.format(TIME_OUTPUT_FORMAT), offset.fix())
+            }
+        };
+        DBResponsePrimitive::String(rendered)
+    }
+}
+
+/// Resolves the [`TimeOutput`] for each result member of one request.
+#[derive(Debug, Clone, Default)]
+pub struct TimeFormat {
+    /// `None` keeps the naive default output. `Some(tz)` adds offsets, with granular time
+    /// dimensions rendered in `tz` (the query timezone).
+    offset_tz: Option<Tz>,
+    /// `{dimension}.{granularity}` of the query's time dimensions: wall-clock in the query
+    /// timezone. Every other `time` member is a UTC instant.
+    granular_members: HashSet<String>,
+}
+
+impl TimeFormat {
+    /// The default naive output, without offsets.
+    pub fn naive() -> Self {
+        Self::default()
+    }
+
+    pub fn for_request(request: &TransformDataRequest) -> Self {
+        if !request.timestamp_with_offset {
+            return Self::naive();
+        }
+        Self::with_offset(&request.query)
+    }
+
+    /// Offset-aware output for `query`. A missing or unknown timezone falls back to UTC, which is
+    /// also what the SQL is generated with.
+    pub fn with_offset(query: &NormalizedQuery) -> Self {
+        let tz = query
+            .timezone
+            .as_deref()
+            .and_then(|tz| tz.parse::<Tz>().ok())
+            .unwrap_or(Tz::UTC);
+        let granular_members = query
+            .time_dimensions
+            .iter()
+            .flatten()
+            .filter_map(|td| {
+                td.granularity.as_ref().map(|granularity| {
+                    format!("{}{}{}", td.dimension, MEMBER_SEPARATOR, granularity)
+                })
+            })
+            .collect();
+        Self {
+            offset_tz: Some(tz),
+            granular_members,
         }
     }
 
-    None
+    pub fn output_for(&self, member: &str) -> TimeOutput {
+        match self.offset_tz {
+            None => TimeOutput::Naive,
+            Some(tz) if self.granular_members.contains(member) && !is_utc(tz) => {
+                TimeOutput::Local(tz)
+            }
+            Some(_) => TimeOutput::Utc,
+        }
+    }
+}
+
+fn is_utc(tz: Tz) -> bool {
+    matches!(
+        tz,
+        Tz::UTC
+            | Tz::Etc__UTC
+            | Tz::Etc__UCT
+            | Tz::UCT
+            | Tz::Etc__Universal
+            | Tz::Universal
+            | Tz::Etc__Zulu
+            | Tz::Zulu
+    )
+}
+
+/// Transform specified `value` with specified `type` to the network protocol type, using the
+/// default naive time output.
+pub fn transform_value(value: DBResponsePrimitive, type_: &str) -> DBResponsePrimitive {
+    transform_value_with(value, type_, TimeOutput::Naive)
 }
 
 /// Transform specified `value` with specified `type` to the network protocol type.
-pub fn transform_value(value: DBResponsePrimitive, type_: &str) -> DBResponsePrimitive {
+pub fn transform_value_with(
+    value: DBResponsePrimitive,
+    type_: &str,
+    time_output: TimeOutput,
+) -> DBResponsePrimitive {
     match value {
-        DBResponsePrimitive::String(ref s) if type_ == "time" => {
-            DBResponsePrimitive::String(parse_time_string(s).unwrap_or_else(|| s.clone()))
+        DBResponsePrimitive::String(ref s) if type_ == "time" => match parse_time_string(s) {
+            Some(dt) => time_output.format(&dt),
+            None => value,
+        },
+        // Arrow timestamps are already serialized naive; only rewrite them to add an offset.
+        DBResponsePrimitive::Timestamp(ref dt)
+            if type_ == "time" && time_output != TimeOutput::Naive =>
+        {
+            time_output.format(dt)
         }
         other => other,
     }
@@ -470,6 +589,7 @@ pub(crate) enum CompactPlanEntry<'a> {
     Cell {
         column: &'a [DBResponsePrimitive],
         member_type: &'a str,
+        time_output: TimeOutput,
     },
     /// Constant value replicated across every row (the
     /// `compareDateRange` synthetic tail for [`QueryType::CompareDateRangeQuery`]).
@@ -487,6 +607,7 @@ pub(crate) fn build_compact_plan<'a>(
     cube_store_result: &'a QueryResult,
     query_type: &QueryType,
     time_dimensions: Option<&Vec<QueryTimeDimension>>,
+    time_format: &TimeFormat,
 ) -> Result<CompactPlan<'a>> {
     let mut entries: Vec<CompactPlanEntry<'a>> = Vec::with_capacity(members.len());
 
@@ -497,6 +618,7 @@ pub(crate) fn build_compact_plan<'a>(
                     entries.push(CompactPlanEntry::Cell {
                         column: cube_store_result.data[column_index].as_slice(),
                         member_type: annotation_item.member_type.as_deref().unwrap_or(""),
+                        time_output: time_format.output_for(m),
                     });
                 }
             }
@@ -523,6 +645,7 @@ pub(crate) fn build_compact_plan<'a>(
                     entries.push(CompactPlanEntry::Cell {
                         column,
                         member_type,
+                        time_output: time_format.output_for(&blending_key),
                     });
                 }
             }
@@ -544,8 +667,13 @@ pub fn get_compact_row(plan: &CompactPlan<'_>, row_idx: usize) -> Vec<DBResponse
             CompactPlanEntry::Cell {
                 column,
                 member_type,
+                time_output,
             } => {
-                row.push(transform_value(column[row_idx].clone(), member_type));
+                row.push(transform_value_with(
+                    column[row_idx].clone(),
+                    member_type,
+                    *time_output,
+                ));
             }
             CompactPlanEntry::Constant(v) => {
                 row.push(v.clone());
@@ -570,6 +698,7 @@ pub struct VanillaColumnPlan<'a> {
     /// Cloned via [`Arc::clone`] per row (atomic refcount inc).
     key: Arc<InternedKey>,
     member_type: &'a str,
+    time_output: TimeOutput,
 }
 
 pub(crate) struct VanillaGranularityTrack<'a> {
@@ -618,6 +747,7 @@ pub fn build_vanilla_plan<'a>(
     annotation: &'a HashMap<String, ConfigItem>,
     query: &NormalizedQuery,
     query_type: &QueryType,
+    time_format: &TimeFormat,
 ) -> Result<VanillaPlan<'a>> {
     let mut columns = Vec::with_capacity(cube_store_result.columns_pos.len());
     let mut candidates_for_base: IndexMap<&'a str, Vec<(u8, Arc<InternedKey>)>> = IndexMap::new();
@@ -646,6 +776,7 @@ pub fn build_vanilla_plan<'a>(
             column,
             key,
             member_type,
+            time_output: time_format.output_for(member_name),
         });
     }
 
@@ -751,6 +882,7 @@ pub(crate) enum ColumnarColumnSource {
 
 pub(crate) struct ColumnarColumnPlan<'a> {
     member_type: &'a str,
+    time_output: TimeOutput,
     source: ColumnarColumnSource,
 }
 
@@ -761,6 +893,7 @@ fn build_columnar_plan<'a>(
     columns_pos: &IndexMap<String, usize>,
     query_type: &QueryType,
     time_dimensions: Option<&Vec<QueryTimeDimension>>,
+    time_format: &TimeFormat,
 ) -> Result<Vec<ColumnarColumnPlan<'a>>> {
     let mut plan: Vec<ColumnarColumnPlan<'a>> = Vec::with_capacity(members.len());
 
@@ -780,6 +913,7 @@ fn build_columnar_plan<'a>(
         if let Some((annotation_item, index)) = resolved {
             plan.push(ColumnarColumnPlan {
                 member_type: annotation_item.member_type.as_deref().unwrap_or(""),
+                time_output: time_format.output_for(m),
                 source: ColumnarColumnSource::DbColumn { index },
             });
             continue;
@@ -791,6 +925,7 @@ fn build_columnar_plan<'a>(
                 QueryType::CompareDateRangeQuery => {
                     plan.push(ColumnarColumnPlan {
                         member_type: "",
+                        time_output: TimeOutput::Naive,
                         source: ColumnarColumnSource::Constant(get_date_range_value(
                             time_dimensions,
                         )?),
@@ -809,6 +944,7 @@ fn build_columnar_plan<'a>(
                                 .map_or("", |a| a.member_type.as_deref().unwrap_or(""));
                             plan.push(ColumnarColumnPlan {
                                 member_type,
+                                time_output: time_format.output_for(&response_key),
                                 source: ColumnarColumnSource::DbColumn { index },
                             });
                             continue;
@@ -821,6 +957,7 @@ fn build_columnar_plan<'a>(
 
         plan.push(ColumnarColumnPlan {
             member_type: "",
+            time_output: TimeOutput::Naive,
             source: ColumnarColumnSource::NullFilled,
         });
     }
@@ -843,7 +980,11 @@ fn build_columnar_columns(
         match &plan_entry.source {
             ColumnarColumnSource::DbColumn { index } => {
                 for cell in db_data.data[*index].iter() {
-                    out.push(transform_value(cell.clone(), plan_entry.member_type));
+                    out.push(transform_value_with(
+                        cell.clone(),
+                        plan_entry.member_type,
+                        plan_entry.time_output,
+                    ));
                 }
             }
             ColumnarColumnSource::Constant(v) => {
@@ -872,7 +1013,11 @@ pub fn get_vanilla_row(plan: &VanillaPlan<'_>, row_idx: usize) -> Result<Vanilla
     );
 
     for column in &plan.columns {
-        let transformed_value = transform_value(column.column[row_idx].clone(), column.member_type);
+        let transformed_value = transform_value_with(
+            column.column[row_idx].clone(),
+            column.member_type,
+            column.time_output,
+        );
         row.insert(Arc::clone(&column.key), transformed_value);
     }
 
@@ -1040,6 +1185,7 @@ impl TransformedData {
         let query = &request_data.query;
         let query_type = &request_data.query_type.clone().unwrap_or_default();
         let res_type = request_data.res_type.clone();
+        let time_format = TimeFormat::for_request(request_data);
 
         let (members_to_alias_map, members) = get_members(
             query_type,
@@ -1058,6 +1204,7 @@ impl TransformedData {
                     cube_store_result,
                     query_type,
                     query.time_dimensions.as_ref(),
+                    &time_format,
                 )?;
                 let row_count = cube_store_result.row_count;
                 let dataset: Vec<_> = (0..row_count)
@@ -1073,6 +1220,7 @@ impl TransformedData {
                     &cube_store_result.columns_pos,
                     query_type,
                     query.time_dimensions.as_ref(),
+                    &time_format,
                 )?;
                 let columns = build_columnar_columns(&plan, cube_store_result);
                 Ok(TransformedData::Columnar { members, columns })
@@ -1084,6 +1232,7 @@ impl TransformedData {
                     annotation,
                     query,
                     query_type,
+                    &time_format,
                 )?;
                 let row_count = cube_store_result.row_count;
                 let dataset: Vec<_> = (0..row_count)
@@ -3242,6 +3391,7 @@ mod tests {
             &raw_data,
             query_type,
             Some(time_dimensions),
+            &TimeFormat::naive(),
         )?;
         let res = get_compact_row(&plan, 0);
 
@@ -3291,6 +3441,7 @@ mod tests {
             &raw_data,
             query_type,
             Some(time_dimensions),
+            &TimeFormat::naive(),
         )?;
         let res = get_compact_row(&plan, 0);
 
@@ -3340,6 +3491,7 @@ mod tests {
             &raw_data,
             query_type,
             Some(time_dimensions),
+            &TimeFormat::naive(),
         )?;
         let res = get_compact_row(&plan, 0);
 
@@ -3430,6 +3582,7 @@ mod tests {
             &raw_data,
             query_type,
             Some(time_dimensions),
+            &TimeFormat::naive(),
         )?;
         let res = get_compact_row(&plan, 0);
 
@@ -3477,6 +3630,7 @@ mod tests {
             annotation,
             &query,
             query_type,
+            &TimeFormat::naive(),
         )?;
         let res = get_vanilla_row(&plan, 0)?;
 
@@ -3515,6 +3669,7 @@ mod tests {
             annotation,
             &query,
             query_type,
+            &TimeFormat::naive(),
         ) {
             Ok(_) => Err(TestError("build_vanilla_plan() should fail ".to_string()).into()),
             Err(err) => {
@@ -3546,6 +3701,7 @@ mod tests {
             annotation,
             &query,
             query_type,
+            &TimeFormat::naive(),
         ) {
             Ok(_) => Err(TestError("build_vanilla_plan() should fail ".to_string()).into()),
             Err(err) => {
@@ -3785,6 +3941,7 @@ mod tests {
             &annotation,
             &query,
             &QueryType::RegularQuery,
+            &TimeFormat::naive(),
         )?;
         let res = get_vanilla_row(&plan, 0)?;
 
@@ -3796,6 +3953,224 @@ mod tests {
             res.get(&InternedKey::new("Cube.t")),
             Some(&day_transformed),
             "bare base key must use the finest (day) candidate, not month"
+        );
+        Ok(())
+    }
+
+    fn time_str(s: &str) -> DBResponsePrimitive {
+        DBResponsePrimitive::String(s.to_string())
+    }
+
+    fn amsterdam() -> TimeOutput {
+        TimeOutput::Local(Tz::Europe__Amsterdam)
+    }
+
+    #[test]
+    fn test_transform_value_with_utc_output_adds_z() {
+        assert_eq!(
+            transform_value_with(time_str("2026-09-16 10:40:35.694"), "time", TimeOutput::Utc),
+            time_str("2026-09-16T10:40:35.694Z")
+        );
+        // An explicit offset is applied before the UTC designator is added.
+        assert_eq!(
+            transform_value_with(
+                time_str("2026-09-16 12:40:35.694+02"),
+                "time",
+                TimeOutput::Utc
+            ),
+            time_str("2026-09-16T10:40:35.694Z")
+        );
+    }
+
+    #[test]
+    fn test_transform_value_with_local_output_follows_dst() {
+        assert_eq!(
+            transform_value_with(time_str("2026-09-16T00:00:00.000"), "time", amsterdam()),
+            time_str("2026-09-16T00:00:00.000+02:00")
+        );
+        assert_eq!(
+            transform_value_with(time_str("2026-01-16T00:00:00.000"), "time", amsterdam()),
+            time_str("2026-01-16T00:00:00.000+01:00")
+        );
+    }
+
+    #[test]
+    fn test_transform_value_with_local_output_dst_transitions() {
+        // 2026-10-25 02:30 happens twice in Amsterdam: the earlier (summer time) instant wins.
+        assert_eq!(
+            transform_value_with(time_str("2026-10-25T02:30:00.000"), "time", amsterdam()),
+            time_str("2026-10-25T02:30:00.000+02:00")
+        );
+        // 2026-03-29 02:30 does not exist in Amsterdam: the wall-clock value is kept.
+        let in_gap = transform_value_with(time_str("2026-03-29T02:30:00.000"), "time", amsterdam());
+        let DBResponsePrimitive::String(in_gap) = in_gap else {
+            panic!("expected a string");
+        };
+        assert!(in_gap.starts_with("2026-03-29T02:30:00.000+0"), "{in_gap}");
+    }
+
+    #[test]
+    fn test_transform_value_with_timestamp_variant() {
+        let dt = NaiveDateTime::parse_from_str("2026-09-16 10:40:35.694", "%Y-%m-%d %H:%M:%S%.f")
+            .unwrap();
+        // Naive output leaves Arrow timestamps alone; the serializer renders them.
+        assert_eq!(
+            transform_value_with(
+                DBResponsePrimitive::Timestamp(dt),
+                "time",
+                TimeOutput::Naive
+            ),
+            DBResponsePrimitive::Timestamp(dt)
+        );
+        assert_eq!(
+            transform_value_with(DBResponsePrimitive::Timestamp(dt), "time", TimeOutput::Utc),
+            time_str("2026-09-16T10:40:35.694Z")
+        );
+        assert_eq!(
+            transform_value_with(DBResponsePrimitive::Timestamp(dt), "time", amsterdam()),
+            time_str("2026-09-16T10:40:35.694+02:00")
+        );
+    }
+
+    #[test]
+    fn test_transform_value_with_ignores_non_time_and_unparsable() {
+        assert_eq!(
+            transform_value_with(time_str("2026-09-16 10:40:35"), "string", TimeOutput::Utc),
+            time_str("2026-09-16 10:40:35")
+        );
+        assert_eq!(
+            transform_value_with(time_str("not a date"), "time", TimeOutput::Utc),
+            time_str("not a date")
+        );
+    }
+
+    fn make_offset_query(timezone: Option<&str>) -> NormalizedQuery {
+        let mut q = make_query_with_time_dimensions(vec![("Cube.created", Some("day"))]);
+        q.dimensions = Some(vec![MemberOrMemberExpression::Member(
+            "Cube.updated".to_string(),
+        )]);
+        q.timezone = timezone.map(|tz| tz.to_string());
+        q
+    }
+
+    #[test]
+    fn test_time_format_resolves_output_per_member() {
+        let naive = TimeFormat::naive();
+        assert_eq!(naive.output_for("Cube.created.day"), TimeOutput::Naive);
+        assert_eq!(naive.output_for("Cube.updated"), TimeOutput::Naive);
+
+        let tf = TimeFormat::with_offset(&make_offset_query(Some("Europe/Amsterdam")));
+        assert_eq!(tf.output_for("Cube.created.day"), amsterdam());
+        assert_eq!(tf.output_for("Cube.updated"), TimeOutput::Utc);
+        // A granularity the query did not ask for is not wall-clock time.
+        assert_eq!(tf.output_for("Cube.created.month"), TimeOutput::Utc);
+
+        for timezone in [None, Some("UTC"), Some("Etc/UTC"), Some("Not/AZone")] {
+            let tf = TimeFormat::with_offset(&make_offset_query(timezone));
+            assert_eq!(
+                tf.output_for("Cube.created.day"),
+                TimeOutput::Utc,
+                "{timezone:?}"
+            );
+        }
+    }
+
+    fn make_offset_request(
+        res_type: Option<ResultType>,
+        with_offset: bool,
+    ) -> TransformDataRequest {
+        TransformDataRequest {
+            alias_to_member_name_map: HashMap::from([
+                (
+                    "cube__created_day".to_string(),
+                    "Cube.created.day".to_string(),
+                ),
+                ("cube__updated".to_string(), "Cube.updated".to_string()),
+            ]),
+            annotation: HashMap::from([
+                ("Cube.created.day".to_string(), make_config_item("time")),
+                ("Cube.updated".to_string(), make_config_item("time")),
+            ]),
+            query: make_offset_query(Some("Europe/Amsterdam")),
+            query_type: Some(QueryType::RegularQuery),
+            res_type,
+            timestamp_with_offset: with_offset,
+        }
+    }
+
+    fn make_offset_raw_data() -> Result<QueryResult> {
+        QueryResult::try_new(
+            vec!["cube__created_day".to_string(), "cube__updated".to_string()],
+            vec![
+                ColumnarArray::from(vec![time_str("2026-09-16T00:00:00.000")]),
+                ColumnarArray::from(vec![time_str("2026-09-16 10:40:35.694")]),
+            ],
+        )
+        .map_err(Into::into)
+    }
+
+    #[test]
+    fn test_transform_with_offset_all_result_types() -> Result<()> {
+        let raw_data = make_offset_raw_data()?;
+        let expected = serde_json::json!({
+            "Cube.created.day": "2026-09-16T00:00:00.000+02:00",
+            "Cube.updated": "2026-09-16T10:40:35.694Z",
+        });
+
+        let vanilla = TransformedData::transform(&make_offset_request(None, true), &raw_data)?;
+        let TransformedData::Vanilla(rows) = vanilla else {
+            panic!("expected vanilla");
+        };
+        assert_eq!(
+            serde_json::to_value(&rows[0])?["Cube.created.day"],
+            expected["Cube.created.day"]
+        );
+        assert_eq!(
+            serde_json::to_value(&rows[0])?["Cube.updated"],
+            expected["Cube.updated"]
+        );
+        // The deprecated bare key reuses the granular value, offset included.
+        assert_eq!(
+            serde_json::to_value(&rows[0])?["Cube.created"],
+            expected["Cube.created.day"]
+        );
+
+        for res_type in [ResultType::Compact, ResultType::Columnar] {
+            let transformed = TransformedData::transform(
+                &make_offset_request(Some(res_type.clone()), true),
+                &raw_data,
+            )?;
+            let (members, values): (Vec<String>, Vec<DBResponsePrimitive>) = match transformed {
+                TransformedData::Compact { members, dataset } => (members, dataset[0].clone()),
+                TransformedData::Columnar { members, columns } => {
+                    (members, columns.iter().map(|c| c[0].clone()).collect())
+                }
+                TransformedData::Vanilla(_) => panic!("unexpected vanilla"),
+            };
+            for (member, value) in members.iter().zip(values) {
+                assert_eq!(
+                    serde_json::to_value(&value)?,
+                    expected[member],
+                    "{res_type:?} {member}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_transform_without_offset_is_unchanged() -> Result<()> {
+        let raw_data = make_offset_raw_data()?;
+        let transformed = TransformedData::transform(
+            &make_offset_request(Some(ResultType::Compact), false),
+            &raw_data,
+        )?;
+        let TransformedData::Compact { dataset, .. } = transformed else {
+            panic!("expected compact");
+        };
+        assert_eq!(
+            serde_json::to_value(&dataset[0])?,
+            serde_json::json!(["2026-09-16T00:00:00.000", "2026-09-16T10:40:35.694"])
         );
         Ok(())
     }
