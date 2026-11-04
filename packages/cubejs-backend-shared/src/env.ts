@@ -2371,6 +2371,11 @@ const variables: Record<string, (...args: any) => any> = {
     .default(200000)
     .asInt(),
   convertTzForRawTimeDimension: () => get('CUBESQL_SQL_PUSH_DOWN').default('true').asBoolStrict(),
+  // Render `time` values in REST/GraphQL/WebSocket results as ISO 8601 with a UTC offset
+  // (`2024-01-01T00:00:00.000+01:00`, `...Z`) instead of the naive default
+  timestampWithOffset: () => get('CUBEJS_TIMESTAMP_WITH_OFFSET')
+    .default('false')
+    .asBoolStrict(),
   // Read by cubesql too: whether pushed down SQL may read Cube Store pre-aggregations
   sqlPushDownPreAggregations: () => get('CUBESQL_SQL_PUSH_DOWN_PRE_AGGREGATIONS').default('true').asBoolStrict(),
   // Deprecated section
