@@ -128,7 +128,7 @@ export class OrchestratorApi {
         requestId: query.requestId
       });
 
-      Tracer.init().get().histogram('resultset_rows', rowCountFromResult(data), {
+      Tracer.init().get().distribution('resultset_rows', rowCountFromResult(data), {
         pod: getPodName(),
         tenant: tenantIdentifier,
       });
@@ -185,7 +185,7 @@ export class OrchestratorApi {
             tenant: tenantIdentifier,
           });
 
-          Tracer.init().get().histogram('resultset_rows', rowCountFromResult(fromCache), {
+          Tracer.init().get().distribution('resultset_rows', rowCountFromResult(fromCache), {
             pod: getPodName(),
             tenant: tenantIdentifier,
           });

@@ -455,7 +455,7 @@ export class QueryCompletionLogger {
   }
 
   /**
-   * Query duration histogram and request counter, tagged pod, tenant, endpoint, cache, status
+   * Query duration distribution and request counter, tagged pod, tenant, endpoint, cache, status
    * (never queryHash or cubes: unbounded cardinality). Never throws.
    */
   protected emitQueryMetrics(
@@ -473,7 +473,7 @@ export class QueryCompletionLogger {
         status: Number.isInteger(input.status) ? String(input.status) : 'unknown',
       };
       const statsd = Tracer.init().get();
-      statsd.histogram('query.duration', durationMs, tags);
+      statsd.distribution('query.duration', durationMs, tags);
       statsd.increment('queries', 1, tags);
     } catch {
       // metrics must never break a request
