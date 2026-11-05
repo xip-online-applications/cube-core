@@ -60,7 +60,7 @@ jobs:
 
       - name: Checkout xod-core
         if: steps.builds.outputs.ready == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/${{ env.TARGET_REPOSITORY }}
           ref: ${{ env.TARGET_BRANCH }}
@@ -77,7 +77,7 @@ jobs:
 
       - name: Create pull request
         if: steps.builds.outputs.ready == 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ steps.app-token.outputs.token }}
           base: ${{ env.TARGET_BRANCH }}
