@@ -1,0 +1,94 @@
+name: Update Cube images in xod-core
+
+on:
+  workflow_run:
+    workflows:
+      - Build Cube API
+      - Build Cube Store
+    types:
+      - completed
+    branches:
+      - master
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: update-xod-core
+  cancel-in-progress: false
+
+env:
+  TARGET_REPOSITORY: xod-core
+  TARGET_BRANCH: develop
+  DOCKERFILES: apps/cube/kubernetes/*.Dockerfile
+  SHA: ${{ github.event.workflow_run.head_sha }}
+
+jobs:
+  open-pull-request:
+    name: Open pull request in xod-core
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check both images are built
+        id: builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for workflow in wf-cube.yml wf-cubestore.yml; do
+            conclusion=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "$workflow" --commit "$SHA" --json conclusion --jq '.[0].conclusion')
+            if [ "$conclusion" != "success" ]; then
+              echo "$workflow is not successful yet for $SHA ($conclusion), skipping."
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Generate a token
+        if: steps.builds.outputs.ready == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.XOD_CORE_UPDATER_APP_ID }}
+          private-key: ${{ secrets.XOD_CORE_UPDATER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ env.TARGET_REPOSITORY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout xod-core
+        if: steps.builds.outputs.ready == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.TARGET_REPOSITORY }}
+          ref: ${{ env.TARGET_BRANCH }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Update image refs
+        if: steps.builds.outputs.ready == 'true'
+        run: |
+          sed -i -E \
+            -e "s#^(FROM ghcr\.io/${GITHUB_REPOSITORY}/cube-api:transcube-)[0-9a-f]{40}#\1${SHA}#" \
+            -e "s#^(FROM ghcr\.io/${GITHUB_REPOSITORY}/cube-store:transcubestore-)[0-9a-f]{40}#\1${SHA}#" \
+            $DOCKERFILES
+          git diff
+
+      - name: Create pull request
+        if: steps.builds.outputs.ready == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          base: ${{ env.TARGET_BRANCH }}
+          branch: chore/update-cube-images
+          delete-branch: true
+          commit-message: 'chore(cube): update cube-api and cube-store images to ${{ env.SHA }}'
+          title: 'chore(cube): update cube-api and cube-store images to ${{ env.SHA }}'
+          body: |
+            Updates the cube-api and cube-store images to the latest cube-core master build.
+
+            - Commit: ${{ github.server_url }}/${{ github.repository }}/commit/${{ env.SHA }}
+            - Message: ${{ github.event.workflow_run.head_commit.message }}
+
+            Created automatically by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
