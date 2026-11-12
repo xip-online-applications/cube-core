@@ -38,11 +38,14 @@ fn main() {
     let metrics_port = std::env::var("CUBESTORE_METRICS_PORT").unwrap_or("8125".to_string());
     let metrics_server_address = format!("{}:{}", metrics_addr, metrics_port);
 
+    let metrics_tags =
+        metrics::datadog_constant_tags(&metrics_format, |name| std::env::var(name).ok());
+
     init_metrics(
         format!("{}:0", metrics_bind_address),
         metrics_server_address,
         metrics_format,
-        vec![],
+        metrics_tags,
     );
     let telemetry_env = std::env::var("CUBESTORE_TELEMETRY")
         .or(std::env::var("CUBEJS_TELEMETRY"))

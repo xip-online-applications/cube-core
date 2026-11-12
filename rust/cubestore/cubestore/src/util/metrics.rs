@@ -36,6 +36,27 @@ pub fn init_metrics(
     global_sink::init(bind_addr, server_addr, mode, constant_tags).unwrap()
 }
 
+/// DogStatsD tags from Datadog's unified service tagging variables (`DD_ENV`, `DD_SERVICE`), so
+/// CubeStore metrics can be split by environment and service. Plain StatsD has no tags.
+pub fn datadog_constant_tags(
+    mode: &Compatibility,
+    env_var: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    if *mode != Compatibility::DogStatsD {
+        return vec![];
+    }
+
+    [("DD_ENV", "env"), ("DD_SERVICE", "service")]
+        .iter()
+        .filter_map(|(var, tag)| {
+            env_var(var)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("{}:{}", tag, value))
+        })
+        .collect()
+}
+
 pub const fn counter(name: &'static str) -> Counter {
     Counter {
         metric: Metric::new(name, MetricType::Counter),
@@ -217,3 +238,36 @@ mod global_sink {
 }
 
 use global_sink::sink;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(name: &str) -> Option<String> {
+        match name {
+            "DD_ENV" => Some("test".to_string()),
+            "DD_SERVICE" => Some(" cubestore_experimental ".to_string()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn datadog_constant_tags_uses_env_and_service() {
+        assert_eq!(
+            datadog_constant_tags(&Compatibility::DogStatsD, env),
+            vec!["env:test", "service:cubestore_experimental"]
+        );
+    }
+
+    #[test]
+    fn datadog_constant_tags_skips_missing_or_empty_values() {
+        let only_empty_env = |name: &str| (name == "DD_ENV").then(|| "".to_string());
+
+        assert!(datadog_constant_tags(&Compatibility::DogStatsD, only_empty_env).is_empty());
+    }
+
+    #[test]
+    fn datadog_constant_tags_is_empty_for_statsd() {
+        assert!(datadog_constant_tags(&Compatibility::StatsD, env).is_empty());
+    }
+}
