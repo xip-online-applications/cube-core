@@ -5,6 +5,7 @@ import type { QueryKey, QueryKeyHash, QueueDriverConnectionInterface, QueueDrive
 import { QueuePriority } from '@cubejs-backend/base-driver';
 import { pausePromise, testLogger } from '@cubejs-backend/shared';
 import { CubeStoreDriver, CubestoreQueueDriverConnection } from '@cubejs-backend/cubestore-driver';
+import { Tracer } from '@cubejs-backend/tracer';
 
 import { factoryQueueDriver, QueryQueue, QueryQueueOptions, QueryStreamWait, SendProcessMessageFn } from '../../src';
 import { ContinueWaitError } from '../../src/orchestrator/ContinueWaitError';
@@ -208,6 +209,38 @@ export const QueryQueueTest = (name: string, options: QueryQueueTestOptions) => 
       const query: QueryKey = ['select * from', []];
       const result = await queue.executeInQueue('foo', query, query);
       expect(result).toBe('select * from bar');
+    });
+
+    test('queue metrics are tagged with the tenant of the query body and the priority rung', async () => {
+      const distribution = jest.spyOn(Tracer.init().get(), 'distribution').mockImplementation(() => undefined);
+
+      try {
+        const key = `metrics-${crypto.randomBytes(4).toString('hex')}`;
+        await queue.executeInQueue('delay', key, { delay: 10, result: 'm', tenantId: 'acme' }, QueuePriority.Background);
+
+        const expectedTags = { pod: expect.any(String), tenant: 'acme', priority: 'background' };
+        expect(distribution).toHaveBeenCalledWith('time_in_queue', expect.any(Number), expectedTags);
+        expect(distribution).toHaveBeenCalledWith('query_duration', expect.any(Number), expectedTags);
+      } finally {
+        distribution.mockRestore();
+      }
+    });
+
+    test('queue metrics fall back to an unknown tenant', async () => {
+      const distribution = jest.spyOn(Tracer.init().get(), 'distribution').mockImplementation(() => undefined);
+
+      try {
+        const key = `metrics-${crypto.randomBytes(4).toString('hex')}`;
+        await queue.executeInQueue('delay', key, { delay: 10, result: 'm' }, QueuePriority.Interactive);
+
+        expect(distribution).toHaveBeenCalledWith(
+          'time_in_queue',
+          expect.any(Number),
+          { pod: expect.any(String), tenant: 'unknown', priority: 'interactive' },
+        );
+      } finally {
+        distribution.mockRestore();
+      }
     });
 
     test('instant double wait resolve', async () => {

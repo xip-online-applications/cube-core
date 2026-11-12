@@ -41,6 +41,30 @@ export type ExecuteInQueueOptions = Omit<AddToQueueOptions, 'queueId'> & {
 
 type QueueExecutionResult = { result?: unknown, error?: string, streamResult?: boolean };
 
+/**
+ * The `QueuePriority` rung a priority falls on, as a bounded metric tag. Priorities are open
+ * integers (a pre-aggregation can set any), so each one maps to the highest rung at or below it.
+ */
+export function queuePriorityTag(priority: unknown): 'interactive' | 'warmup' | 'background' | 'scheduled' | 'unknown' {
+  if (typeof priority !== 'number' || !Number.isFinite(priority)) {
+    return 'unknown';
+  }
+
+  if (priority >= QueuePriority.Interactive) {
+    return 'interactive';
+  }
+
+  if (priority >= QueuePriority.Warmup) {
+    return 'warmup';
+  }
+
+  if (priority >= QueuePriority.Background) {
+    return 'background';
+  }
+
+  return 'scheduled';
+}
+
 export type QueryStreamWait = {
   promise: Promise<QueryStream | null>,
   dispose: () => void,
@@ -896,12 +920,16 @@ export class QueryQueue {
       let localCancelHandler: unknown = null;
       const startQueryTime = (new Date()).getTime();
       const timeInQueue = (new Date()).getTime() - query.addedToQueueTime;
-      const tenantIdentifier = query.tenantId || 'unknown';
-
-      Tracer.init().get().distribution('time_in_queue', timeInQueue, {
+      // The tenant is set on the query body by QueryCache, not on the queue entry itself.
+      // Pre-aggregation builds don't carry one. Only `priority:interactive` has a request
+      // waiting on it: the lower rungs yield to it by design.
+      const metricTags = {
         pod: getPodName(),
-        tenant: tenantIdentifier,
-      });
+        tenant: query.query?.tenantId || 'unknown',
+        priority: queuePriorityTag(query.priority),
+      };
+
+      Tracer.init().get().distribution('time_in_queue', timeInQueue, metricTags);
 
       const logExecutionError = ({ error, duration }: { error: any, duration: number }) => this.logger('Error while querying', {
         level: 'debug',
@@ -1041,10 +1069,7 @@ export class QueryQueue {
 
         const duration = (new Date()).getTime() - startQueryTime;
 
-        Tracer.init().get().distribution('query_duration', duration, {
-          pod: getPodName(),
-          tenant: tenantIdentifier,
-        });
+        Tracer.init().get().distribution('query_duration', duration, metricTags);
 
         this.logger('Performing query completed', {
           queueId,
