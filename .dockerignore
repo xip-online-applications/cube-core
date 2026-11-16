@@ -28,5 +28,11 @@ packages/cubejs-backend-native/target
 packages/*/node_modules/
 packages/*/dist/
 packages/*/coverage/
+# Local build output of the CubeStore JS wrapper: a stale tsconfig.tsbuildinfo makes the incremental
+# tsc skip emitting after `rm -rf dist`
+rust/cubestore/dist/
+rust/cubestore/node_modules/
+rust/cubestore/target/
+**/tsconfig.tsbuildinfo
 # Other
 packages/cubejs-server-core/playground/
