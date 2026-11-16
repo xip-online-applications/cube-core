@@ -3,6 +3,56 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.26](https://github.com/cube-js/cube/compare/v1.8.25...v1.8.26) (2026-11-15)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.25](https://github.com/cube-js/cube/compare/v1.8.24...v1.8.25) (2026-11-14)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.24](https://github.com/cube-js/cube/compare/v1.8.23...v1.8.24) (2026-11-14)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.23](https://github.com/cube-js/cube/compare/v1.8.22...v1.8.23) (2026-11-13)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.22](https://github.com/cube-js/cube/compare/v1.8.21...v1.8.22) (2026-11-11)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.21](https://github.com/cube-js/cube/compare/v1.8.20...v1.8.21) (2026-11-09)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.20](https://github.com/cube-js/cube/compare/v1.8.19...v1.8.20) (2026-11-06)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.19](https://github.com/cube-js/cube/compare/v1.8.18...v1.8.19) (2026-11-05)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.18](https://github.com/cube-js/cube/compare/v1.8.17...v1.8.18) (2026-11-03)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.17](https://github.com/cube-js/cube/compare/v1.8.16...v1.8.17) (2026-11-02)
+
+**Note:** Version bump only for package @cubejs-backend/testing
+
+## [1.8.16](https://github.com/cube-js/cube/compare/v1.8.15...v1.8.16) (2026-10-31)
+
+### Bug Fixes
+
+- **cubesql:** Drop the shared-member join hint for views, add e2e smoke test ([#12476](https://github.com/cube-js/cube/issues/12476)) ([f8de02e](https://github.com/cube-js/cube/commit/f8de02e940dbdfe86ab96a1b1df4e84b0969cffe)), closes [#10977](https://github.com/cube-js/cube/issues/10977)
+
+### Performance Improvements
+
+- **sql-api:** Plan BI tool queries once and reuse access-policy SQL across requests ([#12488](https://github.com/cube-js/cube/issues/12488)) ([f837c9f](https://github.com/cube-js/cube/commit/f837c9ffb9f1815163735720c1ce74bfad44c826))
+
 ## [1.8.15](https://github.com/cube-js/cube/compare/v1.8.14...v1.8.15) (2026-10-29)
 
 **Note:** Version bump only for package @cubejs-backend/testing

@@ -77,7 +77,9 @@ describe('QueryCompletionLogger', () => {
   afterEach(() => {
     writeSpy.mockRestore();
     for (const k of Object.keys(process.env)) {
-      if (!(k in saved)) delete process.env[k];
+      if (!(k in saved)) {
+        delete process.env[k];
+      }
     }
     Object.assign(process.env, saved);
   });
@@ -605,7 +607,9 @@ describe('error message redaction', () => {
   afterEach(() => {
     writeSpy.mockRestore();
     for (const k of Object.keys(process.env)) {
-      if (!(k in saved)) delete process.env[k];
+      if (!(k in saved)) {
+        delete process.env[k];
+      }
     }
     Object.assign(process.env, saved);
   });
@@ -724,7 +728,9 @@ describe('QueryCompletionLogger metrics', () => {
     jest.useRealTimers();
 
     for (const k of Object.keys(process.env)) {
-      if (!(k in saved)) delete process.env[k];
+      if (!(k in saved)) {
+        delete process.env[k];
+      }
     }
 
     Object.assign(process.env, saved);

@@ -41,3 +41,4 @@ export * from './object-shape';
 export * from './request-id';
 export * from './structured-log';
 export * from './query-execution-tracker';
+export * from './memoize-by-object';

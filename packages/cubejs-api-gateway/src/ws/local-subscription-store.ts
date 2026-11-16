@@ -12,10 +12,37 @@ export type LocalSubscriptionStoreSubscription = {
   cubes: string[],
 };
 
-export type LocalSubscriptionStoreConnection = {
-  subscriptions: Map<string, LocalSubscriptionStoreSubscription>,
-  authContext?: any,
-};
+export class LocalSubscriptionStoreConnection {
+  public readonly subscriptions: Map<string, LocalSubscriptionStoreSubscription> = new Map();
+
+  public authContext?: any;
+
+  protected authorizing: boolean = false;
+
+  protected closed: boolean = false;
+
+  public isAuthorizing(): boolean {
+    return this.authorizing;
+  }
+
+  public async trackAuth<T>(fn: () => Promise<T>): Promise<T> {
+    this.authorizing = true;
+
+    try {
+      return await fn();
+    } finally {
+      this.authorizing = false;
+    }
+  }
+
+  public isClosed(): boolean {
+    return this.closed;
+  }
+
+  public close(): void {
+    this.closed = true;
+  }
+}
 
 const haveCommonElement = (arr1: string[], arr2: string[]): boolean => arr1.some(element => arr2.includes(element));
 
@@ -85,6 +112,18 @@ export class LocalSubscriptionStore {
     emitLog('debug', 'cube.ws.renew', { tenant, count, cubes });
   }
 
+  public connect(connectionId: string): LocalSubscriptionStoreConnection {
+    const existing = this.getConnection(connectionId);
+    if (existing) {
+      return existing;
+    }
+
+    const connection = new LocalSubscriptionStoreConnection();
+    this.connections.set(connectionId, connection);
+
+    return connection;
+  }
+
   public async getSubscription(connectionId: string, subscriptionId: string): Promise<LocalSubscriptionStoreSubscription | undefined> {
     // only get subscription, do not create connection if it doesn't exist
     const connection = this.getConnection(connectionId);
@@ -96,7 +135,12 @@ export class LocalSubscriptionStore {
   }
 
   public async subscribe(connectionId: string, subscriptionId: string, subscription) {
-    const connection = this.getConnectionOrCreate(connectionId);
+    // A subscribe that finishes after the disconnect must not bring the connection back
+    const connection = this.getConnection(connectionId);
+    if (!connection) {
+      return;
+    }
+
     connection.subscriptions.set(subscriptionId, {
       ...subscription,
       cubes: getCubeNames(subscription.message?.params?.query),
@@ -181,27 +225,26 @@ export class LocalSubscriptionStore {
   }
 
   public async disconnect(connectionId: string) {
+    const connection = this.getConnection(connectionId);
+    if (!connection) {
+      return;
+    }
+
+    connection.close();
     this.connections.delete(connectionId);
   }
 
   public async getAuthContext(connectionId: string) {
-    return this.getConnectionOrCreate(connectionId).authContext;
+    return this.getConnection(connectionId)?.authContext;
   }
 
   public async setAuthContext(connectionId: string, authContext) {
-    this.getConnectionOrCreate(connectionId).authContext = authContext;
-  }
-
-  protected getConnectionOrCreate(connectionId: string): LocalSubscriptionStoreConnection {
-    const connect = this.getConnection(connectionId);
-    if (connect) {
-      return connect;
+    const connection = this.getConnection(connectionId);
+    if (!connection) {
+      return;
     }
 
-    const connection: LocalSubscriptionStoreConnection = { subscriptions: new Map<string, LocalSubscriptionStoreSubscription>() };
-    this.connections.set(connectionId, connection);
-
-    return connection;
+    connection.authContext = authContext;
   }
 
   protected getConnection(connectionId: string): LocalSubscriptionStoreConnection | undefined {
@@ -209,6 +252,10 @@ export class LocalSubscriptionStore {
   }
 
   public clear() {
+    for (const connection of this.connections.values()) {
+      connection.close();
+    }
+
     this.connections.clear();
   }
 

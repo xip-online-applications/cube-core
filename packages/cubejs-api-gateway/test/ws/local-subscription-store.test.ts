@@ -11,9 +11,16 @@ jest.mock('@cubejs-backend/tracer', () => ({
 
 mockTracerInit = jest.fn(() => ({ get: () => mockStatsd }));
 
+class TestSubscriptionStore extends LocalSubscriptionStore {
+  public connectionIds(): string[] {
+    return [...this.connections.keys()];
+  }
+}
+
 describe('LocalSubscriptionStore', () => {
   it('stores and retrieves subscription by id', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
+    store.connect('conn-1');
 
     await store.subscribe('conn-1', 'sub-1', {
       message: { method: 'load' },
@@ -29,7 +36,8 @@ describe('LocalSubscriptionStore', () => {
   });
 
   it('stores and retrieves subscription by string id', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
+    store.connect('conn-1');
 
     await store.subscribe('conn-1', '123', {
       message: { method: 'load' },
@@ -43,26 +51,66 @@ describe('LocalSubscriptionStore', () => {
   });
 
   it('does not create a connection when reading missing subscription', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
 
     const missing = await store.getSubscription('unknown-conn', 'sub-1');
 
     expect(missing).toBeUndefined();
-    // eslint-disable-next-line dot-notation
-    expect(store['connections'].size).toBe(0);
+    expect(store.connectionIds()).toEqual([]);
   });
 
   it('does not create a connection when unsubscribing unknown connection', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
 
     await store.unsubscribe('unknown-conn', 'sub-1');
 
-    // eslint-disable-next-line dot-notation
-    expect(store['connections'].size).toBe(0);
+    expect(store.connectionIds()).toEqual([]);
+  });
+
+  it('does not create a connection when subscribing unknown connection', async () => {
+    const store = new TestSubscriptionStore();
+
+    await store.subscribe('unknown-conn', 'sub-1', {
+      message: { method: 'load' },
+      state: {}
+    });
+
+    expect(store.getAllSubscriptions()).toEqual([]);
+    expect(store.connectionIds()).toEqual([]);
+  });
+
+  it('does not create a connection when reading auth context of unknown connection', async () => {
+    const store = new TestSubscriptionStore();
+
+    await expect(store.getAuthContext('unknown-conn')).resolves.toBeUndefined();
+    expect(store.connectionIds()).toEqual([]);
+  });
+
+  it('does not create a connection when setting auth context of unknown connection', async () => {
+    const store = new TestSubscriptionStore();
+
+    await store.setAuthContext('unknown-conn', { securityContext: {} });
+
+    expect(store.connectionIds()).toEqual([]);
+  });
+
+  it('returns the same connection until it disconnects', async () => {
+    const store = new TestSubscriptionStore();
+
+    const connection = store.connect('conn-1');
+    expect(connection.isClosed()).toBe(false);
+    expect(store.connect('conn-1')).toBe(connection);
+
+    await store.disconnect('conn-1');
+
+    expect(connection.isClosed()).toBe(true);
+    await store.setAuthContext('conn-1', { securityContext: {} });
+    await expect(store.getAuthContext('conn-1')).resolves.toBeUndefined();
   });
 
   it('unsubscribes existing subscription', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
+    store.connect('conn-1');
 
     await store.subscribe('conn-1', 'sub-1', {
       message: { method: 'load' },
@@ -76,7 +124,9 @@ describe('LocalSubscriptionStore', () => {
   });
 
   it('returns all active subscriptions with connectionId', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
+    store.connect('conn-1');
+    store.connect('conn-2');
 
     await store.subscribe('conn-1', 'sub-1', {
       message: { method: 'load' },
@@ -105,7 +155,8 @@ describe('LocalSubscriptionStore', () => {
   });
 
   it('removes stale subscriptions during getAllSubscriptions', async () => {
-    const store = new LocalSubscriptionStore({ heartBeatInterval: 1 });
+    const store = new TestSubscriptionStore({ heartBeatInterval: 1 });
+    store.connect('conn-1');
 
     await store.subscribe('conn-1', 'stale', {
       message: { method: 'load' },
@@ -134,16 +185,18 @@ describe('LocalSubscriptionStore', () => {
   });
 
   it('stores and retrieves auth context', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
 
     const authContext = { securityContext: { userId: 42 } };
+    store.connect('conn-1');
     await store.setAuthContext('conn-1', authContext);
 
     await expect(store.getAuthContext('conn-1')).resolves.toEqual(authContext);
   });
 
   it('removes connection on disconnect', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
+    store.connect('conn-1');
 
     await store.subscribe('conn-1', 'sub-1', {
       message: { method: 'load' },
@@ -152,12 +205,13 @@ describe('LocalSubscriptionStore', () => {
 
     await store.disconnect('conn-1');
 
-    // eslint-disable-next-line dot-notation
-    expect(store['connections'].has('conn-1')).toBe(false);
+    expect(store.connectionIds()).not.toContain('conn-1');
   });
 
   it('clears all connections', async () => {
-    const store = new LocalSubscriptionStore();
+    const store = new TestSubscriptionStore();
+    store.connect('conn-1');
+    store.connect('conn-2');
 
     await store.subscribe('conn-1', 'sub-1', {
       message: { method: 'load' },
@@ -170,8 +224,7 @@ describe('LocalSubscriptionStore', () => {
 
     store.clear();
 
-    // eslint-disable-next-line dot-notation
-    expect(store['connections'].size).toBe(0);
+    expect(store.connectionIds()).toEqual([]);
   });
 });
 
@@ -202,11 +255,16 @@ describe('LocalSubscriptionStore logging', () => {
     stdout.mockRestore();
     logSpy.mockRestore();
     warnSpy.mockRestore();
-    if (savedLevel === undefined) delete process.env.CUBEJS_LOG_LEVEL; else process.env.CUBEJS_LOG_LEVEL = savedLevel;
+    if (savedLevel === undefined) {
+      delete process.env.CUBEJS_LOG_LEVEL;
+    } else {
+      process.env.CUBEJS_LOG_LEVEL = savedLevel;
+    }
   });
 
   it('unknown unsubscribe logs a debug event without the id list and counts it', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.subscribe('conn-1', 'abc-secret-id', { message: {}, state: {} });
 
     await store.unsubscribe('conn-1', 'nope');
@@ -223,6 +281,7 @@ describe('LocalSubscriptionStore logging', () => {
   it('unknown unsubscribe is silent at info level', async () => {
     process.env.CUBEJS_LOG_LEVEL = 'info';
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.unsubscribe('conn-1', 'x');
     await store.subscribe('conn-1', 'a', { message: {}, state: {} });
     await store.unsubscribe('conn-1', 'x');
@@ -231,6 +290,7 @@ describe('LocalSubscriptionStore logging', () => {
 
   it('unknown unsubscribe survives a throwing tracer', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     mockTracerInit = jest.fn(() => { throw new Error('boom'); });
     await store.subscribe('conn-1', 'a', { message: {}, state: {} });
     await expect(store.unsubscribe('conn-1', 'x')).resolves.toBeUndefined();
@@ -240,6 +300,7 @@ describe('LocalSubscriptionStore logging', () => {
   // The SubscriptionServer normalises both ids to strings via zod, so this only bites direct store callers.
   it('REPRO type mismatch: number id does not match string key (store level, server coerces)', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.subscribe('conn-1', '123', { message: {}, state: {} });
     await store.unsubscribe('conn-1', 123 as any);
     expect(await store.getSubscription('conn-1', '123')).toBeDefined();
@@ -249,6 +310,7 @@ describe('LocalSubscriptionStore logging', () => {
   // Finding (b): eviction is measured from the last subscribe() call.
   it('REPRO eviction: subscription not refreshed for > heartBeatInterval*4 is evicted, later unsubscribe is unknown', async () => {
     const store = new LocalSubscriptionStore({ heartBeatInterval: 60 });
+    store.connect('conn-1');
     await store.subscribe('conn-1', 'abc', { message: {}, state: {} });
 
     jest.advanceTimersByTime(241 * 1000);
@@ -260,6 +322,7 @@ describe('LocalSubscriptionStore logging', () => {
 
   it('REPRO eviction: a refreshing subscribe() keeps the subscription alive', async () => {
     const store = new LocalSubscriptionStore({ heartBeatInterval: 60 });
+    store.connect('conn-1');
     await store.subscribe('conn-1', 'abc', { message: {}, state: {} });
     jest.advanceTimersByTime(200 * 1000);
     await store.subscribe('conn-1', 'abc', { message: {}, state: {} });
@@ -272,6 +335,7 @@ describe('LocalSubscriptionStore logging', () => {
   // Finding (c): double unsubscribe
   it('REPRO double unsubscribe: second unsubscribe of the same id is unknown', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.subscribe('conn-1', 'abc', { message: {}, state: {} });
     await store.unsubscribe('conn-1', 'abc');
     await store.unsubscribe('conn-1', 'abc');
@@ -281,6 +345,7 @@ describe('LocalSubscriptionStore logging', () => {
   // Finding (d): disconnected connection is silent (no event, no counter)
   it('REPRO disconnected connection: unsubscribe is silent', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.subscribe('conn-1', 'abc', { message: {}, state: {} });
     await store.disconnect('conn-1');
     await store.unsubscribe('conn-1', 'abc');
@@ -289,6 +354,7 @@ describe('LocalSubscriptionStore logging', () => {
 
   it('refresh emits a debug cube.ws.refresh event and no console output', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.setAuthContext('conn-1', { securityContext: { tenantId: 't1' } });
     await store.subscribe('conn-1', 'a', { message: { params: { query: { measures: ['Orders.count'] } } }, state: {} });
 
@@ -301,12 +367,14 @@ describe('LocalSubscriptionStore logging', () => {
 
   it('recordRenew emits a debug cube.ws.renew event', () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     store.recordRenew(3, 't1', ['Orders']);
     expect(lines().find(l => l.event === 'cube.ws.renew')).toMatchObject({ level: 'debug', tenant: 't1', count: 3, cubes: ['Orders'] });
   });
 
   it('emits an info cube.ws.summary every 60 s and resets counters', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.setAuthContext('conn-1', { securityContext: { tenantId: 't1' } });
     await store.subscribe('conn-1', 'a', { message: { params: { query: { measures: ['Orders.count'] } } }, state: {} });
     await store.unsubscribe('conn-1', 'zzz');
@@ -334,6 +402,7 @@ describe('LocalSubscriptionStore logging', () => {
 
   it('close stops the summary interval', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.setAuthContext('conn-1', { securityContext: { tenantId: 't1' } });
     await store.subscribe('conn-1', 'a', { message: {}, state: {} });
     store.close();
@@ -343,6 +412,7 @@ describe('LocalSubscriptionStore logging', () => {
 
   it('the summary interval never throws, even with a throwing tracer, and still resets counters', async () => {
     const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
     await store.setAuthContext('conn-1', { securityContext: { tenantId: 't1' } });
     await store.subscribe('conn-1', 'a', { message: {}, state: {} });
     store.recordRenew(1);

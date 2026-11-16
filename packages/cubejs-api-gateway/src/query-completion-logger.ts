@@ -104,8 +104,12 @@ const truncate = (s: string, max: number): string => (s.length > max ? `${s.slic
 
 const safeString = (v: unknown): string | undefined => {
   try {
-    if (typeof v === 'string') return v;
-    if (v === undefined || v === null) return undefined;
+    if (typeof v === 'string') {
+      return v;
+    }
+    if (v === undefined || v === null) {
+      return undefined;
+    }
     return String(v);
   } catch {
     return undefined;
@@ -245,14 +249,18 @@ export function isSqlApiInternal(method: string): boolean {
 function collectQueryValues(query: unknown): Array<string | number> {
   const out = new Set<string | number>();
   const add = (v: unknown) => {
-    if (out.size >= MAX_REDACTED_VALUES) return;
+    if (out.size >= MAX_REDACTED_VALUES) {
+      return;
+    }
 
     if ((typeof v === 'string' && v.length > 0) || (typeof v === 'number' && Number.isFinite(v))) {
       out.add(v);
     }
   };
   const addAll = (v: unknown, depth: number) => {
-    if (depth > 2) return;
+    if (depth > 2) {
+      return;
+    }
 
     if (Array.isArray(v)) {
       v.forEach((item) => addAll(item, depth + 1));
@@ -262,10 +270,14 @@ function collectQueryValues(query: unknown): Array<string | number> {
   };
 
   const visitFilters = (filters: unknown, depth: number) => {
-    if (!Array.isArray(filters) || depth > MAX_DEPTH) return;
+    if (!Array.isArray(filters) || depth > MAX_DEPTH) {
+      return;
+    }
 
     for (const f of filters.filter(isObj)) {
-      if (out.size >= MAX_REDACTED_VALUES) return;
+      if (out.size >= MAX_REDACTED_VALUES) {
+        return;
+      }
 
       if (Array.isArray(f.values)) {
         f.values.forEach(add);
@@ -365,14 +377,20 @@ function fullQueryJson(query: unknown): string | undefined {
 }
 
 function sanitizeToken(value: unknown, fallback: string): string {
-  if (value === undefined || value === null || value === '') return fallback;
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
   return typeof value === 'string' && TOKEN_RE.test(value) ? value : 'invalid';
 }
 
 function tenantIdOf(context: Record<string, any>): string {
   const tenantId = safeGet(safeGet(context, 'securityContext'), 'tenantId');
-  if (typeof tenantId === 'string' && tenantId) return truncate(tenantId, MAX_TENANT_ID);
-  if (typeof tenantId === 'number' && Number.isFinite(tenantId)) return String(tenantId);
+  if (typeof tenantId === 'string' && tenantId) {
+    return truncate(tenantId, MAX_TENANT_ID);
+  }
+  if (typeof tenantId === 'number' && Number.isFinite(tenantId)) {
+    return String(tenantId);
+  }
   return 'unknown';
 }
 
@@ -412,7 +430,9 @@ export class QueryCompletionLogger {
     this.scheduleInFlightGauge();
     let released = false;
     return () => {
-      if (released) return;
+      if (released) {
+        return;
+      }
       released = true;
       this.inFlightCount--;
       this.scheduleInFlightGauge();
@@ -426,7 +446,9 @@ export class QueryCompletionLogger {
    */
   protected scheduleInFlightGauge(): void {
     try {
-      if (this.gaugeTimer) return;
+      if (this.gaugeTimer) {
+        return;
+      }
 
       const wait = this.gaugeLastEmitted + IN_FLIGHT_GAUGE_INTERVAL_MS - Date.now();
       if (wait <= 0) {
@@ -492,7 +514,9 @@ export class QueryCompletionLogger {
   }
 
   protected recordUnsafe(rawInput: CompletionInput): void {
-    if (!isObj(rawInput)) return;
+    if (!isObj(rawInput)) {
+      return;
+    }
     let input = rawInput;
 
     const context: Record<string, any> = isObj(input.context) ? input.context : {};
@@ -585,7 +609,9 @@ export class QueryCompletionLogger {
    */
   public recordError(input: ErrorEventInput): void {
     try {
-      if (!isObj(input)) return;
+      if (!isObj(input)) {
+        return;
+      }
 
       const error: Record<string, any> = isObj(input.error) ? input.error : {};
       const type = safeString(safeGet(error, 'type'));

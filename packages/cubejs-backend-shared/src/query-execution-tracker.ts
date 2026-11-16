@@ -49,7 +49,9 @@ export class QueryExecutionTracker {
       });
       while (this.entries.size > MAX_ENTRIES) {
         const oldest = this.entries.keys().next().value;
-        if (oldest === undefined) break;
+        if (oldest === undefined) {
+          break;
+        }
         this.entries.delete(oldest);
       }
     } catch (_) {
