@@ -28,8 +28,8 @@
     "hot-shots": "^14.2.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
     "@cubejs-backend/linter": "1.6.22",
+    "@types/node": "^20",
     "typescript": "~5.2.2"
   },
   "license": "Apache-2.0",

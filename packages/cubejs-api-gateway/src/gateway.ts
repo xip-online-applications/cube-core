@@ -93,7 +93,9 @@ import { LocalSubscriptionStore } from './ws/local-subscription-store';
 import {
   getPivotQuery,
   cubeSqlRequestSchema,
+  cubeSqlParamsRequestSchema,
   getQueryGranularity,
+  isSerializedMemberExpression,
   normalizeQuery,
   normalizeQueryCancelPreAggregations,
   normalizeQueryPreAggregationPreview,
@@ -696,7 +698,7 @@ class ApiGateway {
             throw new UserError(`Invalid query format: ${error.message || error.toString()}`);
           }
 
-          await this.sqlServer.execSql(body.query, res, req.context?.securityContext, body.cache, body.timezone, body.throwContinueWait, req.context?.requestId);
+          await this.sqlServer.execSql(body.query, res, req.context?.securityContext, body.cache, body.timezone, body.throwContinueWait, req.context?.requestId, body.responseFormat, body.params);
         } catch (e: any) {
           // Quickfix for https://github.com/cube-js/cube/issues/10450,
           // Right now, it's too complicated to fix the issue correctly, because
@@ -709,6 +711,42 @@ class ApiGateway {
               sql: query,
             },
             redactedQuery: this.redactedSqlForLog(query),
+            context: req.context,
+            res: this.resToResultFn(res),
+            requestStarted
+          });
+        }
+      })
+    );
+
+    app.post(
+      `${this.basePath}/v1/cubesql/params`,
+      userMiddlewares,
+      userAsyncHandler(async (req, res) => {
+        const requestStarted = new Date();
+
+        try {
+          // The scopes running the query needs; planning reads the data model as `meta`
+          await this.assertApiScope('data', req.context?.securityContext);
+          await this.assertApiScope('meta', req.context?.securityContext);
+
+          const { error, value: body } = cubeSqlParamsRequestSchema.validate(req.body);
+          if (error) {
+            throw new UserError(`Invalid query format: ${error.message || error.toString()}`);
+          }
+
+          const result = await this.sqlServer.describeSqlParams(body.query, req.context?.securityContext);
+          if ('error' in result) {
+            throw new UserError(result.error);
+          }
+          res.json({ params: result.params });
+        } catch (e: any) {
+          this.handleError({
+            e,
+            query: {
+              sql: req.body?.query,
+            },
+            redactedQuery: this.redactedSqlForLog(req.body?.query),
             context: req.context,
             res: this.resToResultFn(res),
             requestStarted
@@ -1260,8 +1298,8 @@ class ApiGateway {
       const preAggregations = await compilerApi.preAggregations();
 
       const refreshTimezones = this.scheduledRefreshTimeZones ? await this.scheduledRefreshTimeZones(context) : [];
-      const preAggregationPartitions = await this.refreshScheduler()
-        .preAggregationPartitions(
+      const preAggregationsWithRefreshSql = await this.refreshScheduler()
+        .preAggregationsWithRefreshSql(
           context,
           normalizeQueryPreAggregations(
             {
@@ -1275,7 +1313,7 @@ class ApiGateway {
           )
         );
 
-      res({ preAggregations: preAggregationPartitions.map(({ preAggregation }) => preAggregation) });
+      res({ preAggregations: preAggregationsWithRefreshSql });
     } catch (e: any) {
       this.handleError({
         e, context, res, requestStarted
@@ -1876,12 +1914,12 @@ class ApiGateway {
     const compilerApi = await this.getCompilerApi(context);
     // The data model is read only for queries it takes to tell their paths apart
     let resolver: ReturnType<ApiGateway['memberPathResolver']> | undefined;
-    const normalize = async (q: Query) => {
+    const normalize = async (q: Query, allowMemberExpressions: boolean) => {
       const resolve = this.hasLongMemberPaths(q)
         ? await (resolver ??= this.memberPathResolver(context, compilerApi))
         : undefined;
       return this.checkMemberPaths(
-        normalizeQuery(q, persistent, cacheMode, this.granularitySplitter(resolve)),
+        normalizeQuery(q, persistent, cacheMode, this.granularitySplitter(resolve), allowMemberExpressions),
         resolve
       );
     };
@@ -1892,20 +1930,21 @@ class ApiGateway {
     }> = await Promise.all(queries.map(async (currentQuery) => {
       const hasExpressionsInQuery = this.hasExpressionsInQuery(currentQuery);
 
-      if (hasExpressionsInQuery) {
-        if (!memberExpressions) {
-          throw new Error('Expressions are not allowed in this context');
-        }
-
-        currentQuery = this.parseMemberExpressionsInQuery(currentQuery);
+      if (hasExpressionsInQuery && !memberExpressions) {
+        throw new UserError('Expressions are not allowed in this context');
       }
 
       if ((currentQuery as any).maskedMembers) {
         throw new UserError('maskedMembers cannot be provided in the query');
       }
 
+      let normalizedQuery = await normalize(currentQuery, memberExpressions);
+      if (hasExpressionsInQuery) {
+        normalizedQuery = this.parseMemberExpressionsInQuery(normalizedQuery);
+      }
+
       return {
-        normalizedQuery: await normalize(currentQuery),
+        normalizedQuery,
         hasExpressionsInQuery
       };
     }));
@@ -1949,7 +1988,8 @@ class ApiGateway {
             rewrittenQuery = this.evalMemberExpressionsInQuery(rewrittenQuery);
           }
 
-          return normalize(rewrittenQuery);
+          // Row-level security and `queryRewrite` may add member expressions to any query
+          return normalize(rewrittenQuery, true);
         }
       )
     );
@@ -2227,7 +2267,7 @@ class ApiGateway {
         ...(query.segments || []),
         ...(query.timeDimensions || []).map(td => td.dimension),
         ...filterMembers(query.filters),
-      ],
+      ].filter(m => !isSerializedMemberExpression(m)),
       order: orderMembers,
     };
   }
@@ -2290,10 +2330,10 @@ class ApiGateway {
       (query.subqueryJoins ?? []).map(join => join.on),
     ];
 
-    return arraysToCheck.some(array => array?.some(item => typeof item === 'string' && item.startsWith('{')));
+    return arraysToCheck.some(array => array?.some(isSerializedMemberExpression));
   }
 
-  private parseMemberExpressionsInQuery(query: Query): Query {
+  protected parseMemberExpressionsInQuery<T extends Query>(query: T): T {
     return {
       ...query,
       measures: (query.measures || []).map(m => (typeof m === 'string' ? this.parseMemberExpression(m) : m)),
@@ -2307,7 +2347,7 @@ class ApiGateway {
   }
 
   private parseMemberExpression(memberExpression: string): string | ParsedMemberExpression {
-    if (memberExpression.startsWith('{')) {
+    if (isSerializedMemberExpression(memberExpression)) {
       const obj = parseInputMemberExpression(JSON.parse(memberExpression));
       let expression: ParsedMemberExpression['expression'];
       switch (obj.expr.type) {
@@ -3215,8 +3255,6 @@ class ApiGateway {
         apiType,
       });
 
-      // Only the hash is kept between ticks: storing the result itself would retain
-      // its rows (materialized by JSON.stringify) for the lifetime of the subscription
       const resultHash = result ? this.subscriptionResultHash(result) : undefined;
       const state = await subscriptionState();
       if (result && (!state || state.resultHash !== resultHash)) {
@@ -3235,9 +3273,24 @@ class ApiGateway {
     }
   }
 
+  public async unsubscribe({ context, res, unsubscribe }) {
+    try {
+      this.log({
+        type: 'Unsubscribe',
+      }, context);
+
+      await unsubscribe();
+    } catch (e: any) {
+      this.handleError({
+        e, context, res
+      });
+    }
+  }
+
   /**
-   * Fingerprint used to skip resending an unchanged subscription result. Hashes the same
-   * JSON the subscription used to compare in full, so the dedupe semantics are unchanged.
+   * Hash of the subscription result used to detect unchanged results between ticks.
+   * Stored instead of the result itself so that subscriptions don't retain the
+   * native result and its materialized JS rows.
    */
   protected subscriptionResultHash(result: { message: any, opts: any }): string {
     return crypto.createHash('sha1').update(JSON.stringify(result)).digest('hex');

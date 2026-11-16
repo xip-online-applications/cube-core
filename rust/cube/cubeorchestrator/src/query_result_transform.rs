@@ -11,6 +11,7 @@ use chrono::{DateTime, LocalResult, NaiveDateTime, Offset, TimeZone};
 use chrono_tz::Tz;
 use indexmap::{Equivalent, IndexMap};
 use itertools::multizip;
+use regex::Regex;
 use serde::{
     de::{self, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize,
@@ -22,7 +23,6 @@ use std::{
     hash::{BuildHasher, Hash, Hasher},
     sync::{Arc, LazyLock},
 };
-use regex::Regex;
 
 pub const COMPARE_DATE_RANGE_FIELD: &str = "compareDateRange";
 pub const COMPARE_DATE_RANGE_SEPARATOR: &str = " - ";
@@ -322,6 +322,23 @@ fn is_utc(tz: Tz) -> bool {
     )
 }
 
+/// Whether `s` is already `YYYY-MM-DDTHH:MM:SS.sss`, the [`TimeOutput::Naive`] output format for
+/// `time` members. Parsing and re-formatting such a value yields the same string, so it is passed
+/// through as is.
+fn is_standard_time_format(s: &str) -> bool {
+    // `0` stands for a digit, any other byte must match as is.
+    const FORMAT: &[u8; 23] = b"0000-00-00T00:00:00.000";
+
+    s.len() == FORMAT.len()
+        && s.bytes().zip(FORMAT).all(|(c, &f)| {
+            if f == b'0' {
+                c.is_ascii_digit()
+            } else {
+                c == f
+            }
+        })
+}
+
 /// Transform specified `value` with specified `type` to the network protocol type, using the
 /// default naive time output.
 pub fn transform_value(value: DBResponsePrimitive, type_: &str) -> DBResponsePrimitive {
@@ -335,6 +352,15 @@ pub fn transform_value_with(
     time_output: TimeOutput,
 ) -> DBResponsePrimitive {
     match value {
+        // Fast path: drivers are expected to return `time` values already in
+        // `YYYY-MM-DDTHH:MM:SS.sss`, which is the naive output as is.
+        DBResponsePrimitive::String(ref s)
+            if type_ == "time"
+                && time_output == TimeOutput::Naive
+                && is_standard_time_format(s) =>
+        {
+            value
+        }
         DBResponsePrimitive::String(ref s) if type_ == "time" => match parse_time_string(s) {
             Some(dt) => time_output.format(&dt),
             None => value,
@@ -2518,6 +2544,36 @@ mod tests {
             }
             _ => Err(TestError("Mismatched TransformedData types".to_string())),
         }
+    }
+
+    #[test]
+    fn test_transform_value_keeps_standard_time_format() {
+        let time = |s: &str| transform_value(DBResponsePrimitive::String(s.to_string()), "time");
+
+        assert_eq!(
+            time("2024-01-01T00:01:00.000"),
+            DBResponsePrimitive::String("2024-01-01T00:01:00.000".to_string())
+        );
+        assert_eq!(
+            time("1999-12-31T23:59:59.999"),
+            DBResponsePrimitive::String("1999-12-31T23:59:59.999".to_string())
+        );
+        // Not a valid date, but no parser accepts it either, so it was
+        // returned unchanged before the fast path as well.
+        assert_eq!(
+            time("2024-13-45T99:99:99.999"),
+            DBResponsePrimitive::String("2024-13-45T99:99:99.999".to_string())
+        );
+
+        assert!(is_standard_time_format("2024-01-01T00:01:00.000"));
+        assert!(!is_standard_time_format("2024-01-01T00:01:00.000Z"));
+        assert!(!is_standard_time_format("2024-01-01 00:01:00.000"));
+        assert!(!is_standard_time_format("2024-01-01T00:01:00"));
+        assert!(!is_standard_time_format("2024-01-01T00:01:00.0000"));
+        // Bytes right outside `'0'..='9'`.
+        assert!(!is_standard_time_format("/024-01-01T00:01:00.000"));
+        assert!(!is_standard_time_format("2024-01-:1T00:01:00.000"));
+        assert!(!is_standard_time_format("2024-01-01T00:01:00.00:"));
     }
 
     #[test]

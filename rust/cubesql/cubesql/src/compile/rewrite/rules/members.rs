@@ -41,7 +41,7 @@ use crate::{
     transport::{MetaContext, V1CubeMetaDimensionExt, V1CubeMetaExt, V1CubeMetaMeasureExt},
     var, var_iter, var_list_iter, CubeError,
 };
-use cubeclient::models::V1CubeMetaMeasure;
+use cubeclient::models::{V1CubeMetaMeasure, V1CubeMetaType};
 use datafusion::{
     arrow::datatypes::DataType,
     logical_plan::{Column, DFSchema, Expr, Operator},
@@ -299,6 +299,8 @@ impl RewriteRules for MemberRules {
                     "?join_hints",
                 ),
                 self.push_down_limit(
+                    "?members",
+                    "?ungrouped",
                     "?skip",
                     "?fetch",
                     "?inner_skip",
@@ -793,7 +795,8 @@ impl RewriteRules for MemberRules {
 
 enum ColumnToSearch {
     Var(&'static str),
-    DefaultCount,
+    /// Literal argument of `COUNT(<literal>)`
+    DefaultCount(&'static str),
 }
 
 impl MemberRules {
@@ -1017,7 +1020,7 @@ impl MemberRules {
                 "AggregateFunctionExprDistinct:false",
                 agg_fun_expr_within_group_empty_tail(),
             ),
-            ColumnToSearch::DefaultCount,
+            ColumnToSearch::DefaultCount("?any"),
             None,
         ));
         rules.push(find_matching_old_member(
@@ -1031,7 +1034,7 @@ impl MemberRules {
                 ),
                 "?alias",
             ),
-            ColumnToSearch::DefaultCount,
+            ColumnToSearch::DefaultCount("?any"),
             None,
         ));
         rules.push(find_matching_old_member(
@@ -1076,7 +1079,8 @@ impl MemberRules {
              fun_name: Option<&'static str>,
              distinct: Option<&'static str>,
              cast_data_type: Option<&'static str>,
-             _column: Option<&'static str>| {
+             _column: Option<&'static str>,
+             count_literal: Option<&'static str>| {
                 transforming_chain_rewrite(
                     name,
                     member_pushdown_replacer(
@@ -1093,6 +1097,7 @@ impl MemberRules {
                         distinct,
                         "?aggr_expr",
                         cast_data_type,
+                        count_literal,
                         "?measure",
                     ),
                 )
@@ -1414,12 +1419,24 @@ impl MemberRules {
         rules
     }
 
+    /// COUNT(NULL) is always 0, so it can't be replaced with the count measure
+    pub fn is_null_count_literal(
+        egraph: &CubeEGraph,
+        subst: &Subst,
+        count_literal_var: Option<Var>,
+    ) -> bool {
+        count_literal_var.is_some_and(|var| {
+            var_iter!(egraph[subst[var]], LiteralExprValue).any(|value| value.is_null())
+        })
+    }
+
     pub fn measure_rewrites(
         rules: &mut Vec<CubeRewrite>,
         pushdown_measure_rewrite: impl Fn(
             &'static str,
             String,
             String,
+            Option<&'static str>,
             Option<&'static str>,
             Option<&'static str>,
             Option<&'static str>,
@@ -1439,6 +1456,7 @@ impl MemberRules {
             Some("?distinct"),
             None,
             Some("?column"),
+            None,
         ));
         rules.push(pushdown_measure_rewrite(
             "member-pushdown-replacer-agg-fun-alias",
@@ -1456,6 +1474,7 @@ impl MemberRules {
             Some("?distinct"),
             None,
             Some("?column"),
+            None,
         ));
         rules.push(pushdown_measure_rewrite(
             "member-pushdown-replacer-agg-fun-cast",
@@ -1470,6 +1489,7 @@ impl MemberRules {
             Some("?distinct"),
             Some("?data_type"),
             Some("?column"),
+            None,
         ));
         rules.push(pushdown_measure_rewrite(
             "member-pushdown-replacer-agg-fun-on-dimension",
@@ -1484,6 +1504,7 @@ impl MemberRules {
             Some("?distinct"),
             None,
             Some("?column"),
+            None,
         ));
         rules.push(pushdown_measure_rewrite(
             "member-pushdown-replacer-udaf-fun",
@@ -1497,6 +1518,7 @@ impl MemberRules {
             None,
             None,
             Some("?column"),
+            None,
         ));
         rules.push(pushdown_measure_rewrite(
             "member-pushdown-replacer-udaf-fun-on-dimension",
@@ -1510,6 +1532,7 @@ impl MemberRules {
             None,
             None,
             Some("?column"),
+            None,
         ));
         rules.push(pushdown_measure_rewrite(
             "member-pushdown-replacer-agg-fun-default-count",
@@ -1524,6 +1547,7 @@ impl MemberRules {
             Some("?distinct"),
             None,
             None,
+            Some("?any"),
         ));
         rules.push(pushdown_measure_rewrite(
             "member-pushdown-replacer-agg-fun-default-count-alias",
@@ -1541,6 +1565,7 @@ impl MemberRules {
             Some("?distinct"),
             None,
             None,
+            Some("?any"),
         ));
     }
 
@@ -2201,6 +2226,8 @@ impl MemberRules {
 
     fn push_down_limit(
         &self,
+        members_var: &'static str,
+        ungrouped_var: &'static str,
         skip_var: &'static str,
         fetch_var: &'static str,
         inner_skip_var: &'static str,
@@ -2208,6 +2235,8 @@ impl MemberRules {
         new_skip_var: &'static str,
         new_fetch_var: &'static str,
     ) -> impl Fn(&mut CubeEGraph, &mut Subst) -> bool {
+        let members_var = var!(members_var);
+        let ungrouped_var = var!(ungrouped_var);
         let skip_var = var!(skip_var);
         let fetch_var = var!(fetch_var);
         let inner_skip_var = var!(inner_skip_var);
@@ -2227,6 +2256,14 @@ impl MemberRules {
             for fetch in var_iter!(egraph[subst[fetch_var]], LimitFetch) {
                 fetch_value = *fetch;
                 break;
+            }
+            // An ungrouped scan of AllMembers with LIMIT 0 (e.g. from WHERE false) can't be
+            // pushed to Cube as a whole and would reach it with no members
+            if fetch_value == Some(0)
+                && egraph[subst[members_var]].data.all_members
+                && var_iter!(egraph[subst[ungrouped_var]], CubeScanUngrouped).any(|u| *u)
+            {
+                return false;
             }
 
             let mut inner_skip_value = None;
@@ -2507,7 +2544,11 @@ impl MemberRules {
             var!(member_pushdown_replacer_alias_to_cube_var);
         let column_var = match &column_to_search {
             ColumnToSearch::Var(column_var) => Some(var!(column_var)),
-            ColumnToSearch::DefaultCount => None,
+            ColumnToSearch::DefaultCount(_) => None,
+        };
+        let count_literal_var = match &column_to_search {
+            ColumnToSearch::DefaultCount(literal_var) => Some(var!(literal_var)),
+            ColumnToSearch::Var(_) => None,
         };
         let cast_type_var = cast_type_var.map(|cast_type_var| var!(cast_type_var));
         let old_members_var = var!(old_members_var);
@@ -2517,6 +2558,9 @@ impl MemberRules {
         let flat_list = self.config_obj.push_down_pull_up_split();
         let meta = self.meta_context.clone();
         move |egraph, subst| {
+            if Self::is_null_count_literal(egraph, subst, count_literal_var) {
+                return false;
+            }
             let alias_to_cubes: Vec<_> = var_iter!(
                 egraph[subst[member_pushdown_replacer_alias_to_cube_var]],
                 MemberPushdownReplacerAliasToCube
@@ -2532,7 +2576,7 @@ impl MemberRules {
 
             for alias_to_cube in alias_to_cubes {
                 // Do not push down COUNT(*) if there are joined cubes
-                if matches!(column_to_search, ColumnToSearch::DefaultCount) {
+                if matches!(column_to_search, ColumnToSearch::DefaultCount(_)) {
                     let joined_cubes = alias_to_cube
                         .iter()
                         .map(|(_, cube_name)| cube_name)
@@ -2610,6 +2654,7 @@ impl MemberRules {
         distinct_var: Option<&'static str>,
         original_expr_var: &'static str,
         cast_data_type_var: Option<&'static str>,
+        count_literal_var: Option<&'static str>,
         measure_out_var: &'static str,
     ) -> impl Fn(&mut CubeEGraph, &mut Subst) -> bool {
         let member_pushdown_replacer_alias_to_cube_var =
@@ -2619,10 +2664,14 @@ impl MemberRules {
         let distinct_var = distinct_var.map(|distinct_var| var!(distinct_var));
         let original_expr_var = var!(original_expr_var);
         let cast_data_type_var = cast_data_type_var.map(|var| var!(var));
+        let count_literal_var = count_literal_var.map(|var| var!(var));
         let measure_out_var = var!(measure_out_var);
         let meta_context = self.meta_context.clone();
         let disable_strict_agg_type_match = self.config_obj.disable_strict_agg_type_match();
         move |egraph, subst| {
+            if Self::is_null_count_literal(egraph, subst, count_literal_var) {
+                return false;
+            }
             if let Some(alias) = original_expr_name(egraph, subst[original_expr_var]) {
                 for measure_name in var_iter!(egraph[subst[measure_name_var]], MeasureName)
                     .cloned()
@@ -2670,7 +2719,7 @@ impl MemberRules {
                                                     CastExprDataType
                                                 )
                                                 .any(|dt| match dt {
-                                                    DataType::Decimal(_, _) => true,
+                                                    DataType::Decimal128(_, _) => true,
                                                     _ => false,
                                                 })
                                             })
@@ -2785,7 +2834,7 @@ impl MemberRules {
                                                     CastExprDataType
                                                 )
                                                 .any(|dt| match dt {
-                                                    DataType::Decimal(_, _) => true,
+                                                    DataType::Decimal128(_, _) => true,
                                                     _ => false,
                                                 })
                                             })
@@ -3361,7 +3410,7 @@ impl MemberRules {
                 .cloned()
                 .collect::<Vec<_>>();
 
-            let mut matched: Option<(String, String, Vec<String>, Vec<String>)> = None;
+            let mut matched: Option<(Vec<String>, Vec<String>)> = None;
             'pairs: for left_on in left_join_ons.iter() {
                 for right_on in right_join_ons.iter() {
                     if left_on.is_empty() || left_on.len() != right_on.len() {
@@ -3389,11 +3438,9 @@ impl MemberRules {
                             all_match = false;
                             break;
                         }
-                        // A CubeScan can expose members from multiple cubes/views,
-                        // so every join-key column on a given side must resolve to
-                        // the same cube/view. Otherwise the merged join hint would
-                        // be ambiguous and the merge is not a single shared-member
-                        // join we can represent.
+                        // Keep the merge to keys taken from a single cube/view per
+                        // side; composite keys spread across several views on one
+                        // side are not covered by the presence-filter semantics.
                         let this_left_cube = left_name.split('.').next().map(|s| s.to_string());
                         let this_right_cube = right_name.split('.').next().map(|s| s.to_string());
                         if left_cube_name.is_some() && left_cube_name != this_left_cube {
@@ -3410,20 +3457,17 @@ impl MemberRules {
                         right_keys.push(right_name);
                     }
                     if all_match {
-                        if let (Some(left_cube_name), Some(right_cube_name)) =
-                            (left_cube_name, right_cube_name)
-                        {
-                            matched =
-                                Some((left_cube_name, right_cube_name, left_keys, right_keys));
-                            break 'pairs;
-                        }
+                        matched = Some((left_keys, right_keys));
+                        break 'pairs;
                     }
                 }
             }
 
-            let Some((left_cube, right_cube, shared_left_keys, shared_right_keys)) = matched else {
+            let Some((shared_left_keys, shared_right_keys)) = matched else {
                 return false;
             };
+            let pair_join_hint =
+                cube_pair_join_hint(&meta_context, &shared_left_keys[0], &shared_right_keys[0]);
 
             // Re-introduce INNER/LEFT/RIGHT semantics on top of the FULL OUTER
             // multi-fact stitch by requiring the join key of each "must be
@@ -3494,7 +3538,7 @@ impl MemberRules {
                                     .iter()
                                     .chain(right_join_hints.iter())
                                     .cloned()
-                                    .chain(iter::once(vec![left_cube.clone(), right_cube.clone()]))
+                                    .chain(pair_join_hint.clone())
                                     .collect(),
                             );
 
@@ -3674,12 +3718,7 @@ impl MemberRules {
             if resolve_underlying(&left_key) != resolve_underlying(&right_key) {
                 return false;
             }
-            let Some(left_cube) = left_key.split('.').next().map(|s| s.to_string()) else {
-                return false;
-            };
-            let Some(right_cube) = right_key.split('.').next().map(|s| s.to_string()) else {
-                return false;
-            };
+            let pair_join_hint = cube_pair_join_hint(&meta_context, &left_key, &right_key);
 
             // A filtered cross join is an INNER join: require both keys present.
             let presence_members: Vec<String> = vec![left_key.clone(), right_key.clone()];
@@ -3715,7 +3754,7 @@ impl MemberRules {
                                     .iter()
                                     .chain(right_join_hints.iter())
                                     .cloned()
-                                    .chain(iter::once(vec![left_cube.clone(), right_cube.clone()]))
+                                    .chain(pair_join_hint.clone())
                                     .collect(),
                             );
 
@@ -4238,6 +4277,24 @@ fn is_proper_cube_join_condition(
         .next()?;
 
     Some((left_cube, right_cube))
+}
+
+/// The `[left, right]` join hint for a shared-member join of the cubes owning these
+/// members, or `None` when either is a view: views have no edges in the join graph, so
+/// a hint naming one is unplannable, and view members carry their own join paths.
+fn cube_pair_join_hint(
+    meta_context: &MetaContext,
+    left_member: &str,
+    right_member: &str,
+) -> Option<Vec<String>> {
+    let cube_of = |member: &str| member.split('.').next().unwrap_or(member).to_string();
+    let is_view = |cube: &str| {
+        meta_context
+            .find_cube_with_name(cube)
+            .is_some_and(|meta| meta.r#type == V1CubeMetaType::View)
+    };
+    let (left, right) = (cube_of(left_member), cube_of(right_member));
+    (!is_view(&left) && !is_view(&right)).then(|| vec![left, right])
 }
 
 #[cfg(test)]

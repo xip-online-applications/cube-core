@@ -80,21 +80,15 @@ export class WebSocketServer {
 
       let messageStr: string;
 
-      if (message.message && message.message.isWrapper) {
-        // In case we have a wrapped query result, we don't want to parse/stringify
-        // it again - it's too expensive, instead we serialize the rest of the message and then
-        // inject query result json into message.
-        const resMsg = new TextDecoder().decode(await message.message.getFinalResult());
-        delete message.message;
-        messageStr = JSON.stringify(message);
-
-        if (messageStr === '{}') {
-          messageStr = `{"message":${resMsg}}`;
-        } else {
-          messageStr = `${messageStr.slice(0, -1)},"message":${resMsg}}`;
-        }
-      } else {
-        messageStr = JSON.stringify(message);
+      try {
+        messageStr = await this.serializeMessage(message);
+      } catch (e: any) {
+        this.serverCore.logger('WebSocket Send Error', {
+          connectionId,
+          error: e?.stack || String(e),
+        });
+        socket.close(1011, 'Internal error');
+        throw e;
       }
 
       socket.send(messageStr);
@@ -108,11 +102,28 @@ export class WebSocketServer {
       // 'close' follows 'error', so this runs twice for an errored socket; both steps are idempotent
       const cleanup = async () => {
         this.connectionIdToSocket.delete(connectionId);
-        await this.subscriptionServer!.disconnect(connectionId);
+
+        try {
+          await this.subscriptionServer!.disconnect(connectionId);
+        } catch (e: any) {
+          this.serverCore.logger('WebSocket Disconnect Error', {
+            connectionId,
+            error: e?.stack || String(e),
+          });
+        }
       };
 
+      // An exception escaping these async listeners would be an unhandled rejection, which terminates the process
       ws.on('message', async (message) => {
-        await this.subscriptionServer!.processMessage(connectionId, message as string);
+        try {
+          await this.subscriptionServer!.processMessage(connectionId, message as string);
+        } catch (e: any) {
+          this.serverCore.logger('WebSocket Message Error', {
+            connectionId,
+            error: e?.stack || String(e),
+          });
+          ws.close(1011, 'Internal error');
+        }
       });
 
       ws.on('close', cleanup);
@@ -133,6 +144,25 @@ export class WebSocketServer {
         }),
       }
     );
+  }
+
+  protected async serializeMessage(message: any): Promise<string> {
+    if (message.message && message.message.isWrapper) {
+      // In case we have a wrapped query result, we don't want to parse/stringify
+      // it again - it's too expensive, instead we serialize the rest of the message and then
+      // inject query result json into message.
+      const resMsg = new TextDecoder().decode(await message.message.getFinalResult());
+      delete message.message;
+      const messageStr = JSON.stringify(message);
+
+      if (messageStr === '{}') {
+        return `{"message":${resMsg}}`;
+      }
+
+      return `${messageStr.slice(0, -1)},"message":${resMsg}}`;
+    }
+
+    return JSON.stringify(message);
   }
 
   public async close() {

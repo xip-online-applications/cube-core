@@ -108,9 +108,15 @@ function normalizeSingle(query: unknown): unknown {
           return null;
         }
         const t: Record<string, unknown> = {};
-        if ('compareDateRange' in td) t.compareDateRange = RANGE_MARKER;
-        if ('dateRange' in td) t.dateRange = RANGE_MARKER;
-        if ('dimension' in td) t.dimension = memberOrMarker(td.dimension);
+        if ('compareDateRange' in td) {
+          t.compareDateRange = RANGE_MARKER;
+        }
+        if ('dateRange' in td) {
+          t.dateRange = RANGE_MARKER;
+        }
+        if ('dimension' in td) {
+          t.dimension = memberOrMarker(td.dimension);
+        }
         if ('granularity' in td) {
           t.granularity = typeof td.granularity === 'string' && GRANULARITY_RE.test(td.granularity) ? td.granularity : '?';
         }
@@ -118,15 +124,27 @@ function normalizeSingle(query: unknown): unknown {
       })
       : [];
   }
-  if ('order' in query) out.order = normalizeOrder(query.order);
-  if (finite(query.limit)) out.limit = query.limit;
-  if (finite(query.offset)) out.offset = query.offset;
+  if ('order' in query) {
+    out.order = normalizeOrder(query.order);
+  }
+  if (finite(query.limit)) {
+    out.limit = query.limit;
+  }
+  if (finite(query.offset)) {
+    out.offset = query.offset;
+  }
   for (const key of ['ungrouped', 'total', 'renewQuery']) {
-    if (typeof query[key] === 'boolean') out[key] = query[key];
+    if (typeof query[key] === 'boolean') {
+      out[key] = query[key];
+    }
   }
   // Presence markers only; the values are never logged.
-  if ('queryType' in query) out.queryType = true;
-  if ('timezone' in query) out.timezone = true;
+  if ('queryType' in query) {
+    out.queryType = true;
+  }
+  if ('timezone' in query) {
+    out.timezone = true;
+  }
   return Object.fromEntries(Object.keys(out).sort().map((k) => [k, out[k]]));
 }
 
@@ -206,9 +224,15 @@ export function summarizeQuery(query: unknown, maxLen: number = 500): string {
         }
       }
       strArr(q.segments).forEach((s) => tokens.push(`s:${s}`));
-      if (finite(q.limit)) tokens.push(`limit=${q.limit}`);
-      if (finite(q.offset)) tokens.push(`offset=${q.offset}`);
-      if (q.ungrouped === true) tokens.push('ungrouped');
+      if (finite(q.limit)) {
+        tokens.push(`limit=${q.limit}`);
+      }
+      if (finite(q.offset)) {
+        tokens.push(`offset=${q.offset}`);
+      }
+      if (q.ungrouped === true) {
+        tokens.push('ungrouped');
+      }
       parts.push(tokens.join(' '));
     }
     const summary = parts.join(' | ');
@@ -235,7 +259,9 @@ export function queryStats(query: unknown): QueryStats {
     const add = (member: unknown) => {
       if (validMember(member)) {
         const c = cubeOf(member);
-        if (c) cubes.add(c);
+        if (c) {
+          cubes.add(c);
+        }
       }
     };
     const queries = Array.isArray(query) ? query : [query];
@@ -256,8 +282,12 @@ export function queryStats(query: unknown): QueryStats {
       stats.dimensionCount += dimensions.length;
       stats.hasTimeDimension = stats.hasTimeDimension || tds.length > 0;
       stats.ungrouped = stats.ungrouped || q.ungrouped === true;
-      if (finite(q.limit)) stats.limit = Math.max(stats.limit ?? q.limit, q.limit);
-      if (finite(q.offset)) stats.offset = Math.max(stats.offset ?? q.offset, q.offset);
+      if (finite(q.limit)) {
+        stats.limit = Math.max(stats.limit ?? q.limit, q.limit);
+      }
+      if (finite(q.offset)) {
+        stats.offset = Math.max(stats.offset ?? q.offset, q.offset);
+      }
     }
     stats.cubes = [...cubes].sort().slice(0, MAX_CUBES);
   } catch (e) {
