@@ -135,6 +135,8 @@ export type QueryBody = {
   requestContext?: any;
   external?: boolean;
   isJob?: boolean;
+  /** A build job that only reports partition statuses, see `PreAggregationLoaderOptions.dryRun` */
+  dryRun?: boolean;
   forceNoCache?: boolean;
   preAggregations?: PreAggregationDescription[];
   /** `null` streams rows with the SQL aliases as keys. */

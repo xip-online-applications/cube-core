@@ -3,6 +3,40 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.8.34](https://github.com/cube-js/cube/compare/v1.8.33...v1.8.34) (2026-11-24)
+
+**Note:** Version bump only for package @cubejs-backend/clickhouse-driver
+
+## [1.8.33](https://github.com/cube-js/cube/compare/v1.8.32...v1.8.33) (2026-11-23)
+
+### Features
+
+- **clickhouse-driver:** Support OIDC / temporary AWS credentials for the S3 export bucket ([#12924](https://github.com/cube-js/cube/issues/12924)) ([a4aa688](https://github.com/cube-js/cube/commit/a4aa688ce7ed8a335112a3d17a85a38aae149c5c)), closes [#11143](https://github.com/cube-js/cube/issues/11143) [#11143](https://github.com/cube-js/cube/issues/11143)
+
+## [1.8.32](https://github.com/cube-js/cube/compare/v1.8.31...v1.8.32) (2026-11-21)
+
+**Note:** Version bump only for package @cubejs-backend/clickhouse-driver
+
+## [1.8.31](https://github.com/cube-js/cube/compare/v1.8.30...v1.8.31) (2026-11-20)
+
+**Note:** Version bump only for package @cubejs-backend/clickhouse-driver
+
+## [1.8.30](https://github.com/cube-js/cube/compare/v1.8.29...v1.8.30) (2026-11-19)
+
+**Note:** Version bump only for package @cubejs-backend/clickhouse-driver
+
+## [1.8.29](https://github.com/cube-js/cube/compare/v1.8.28...v1.8.29) (2026-11-19)
+
+**Note:** Version bump only for package @cubejs-backend/clickhouse-driver
+
+## [1.8.28](https://github.com/cube-js/cube/compare/v1.8.27...v1.8.28) (2026-11-18)
+
+**Note:** Version bump only for package @cubejs-backend/clickhouse-driver
+
+## [1.8.27](https://github.com/cube-js/cube/compare/v1.8.26...v1.8.27) (2026-11-17)
+
+**Note:** Version bump only for package @cubejs-backend/clickhouse-driver
+
 ## [1.8.26](https://github.com/cube-js/cube/compare/v1.8.25...v1.8.26) (2026-11-15)
 
 **Note:** Version bump only for package @cubejs-backend/clickhouse-driver

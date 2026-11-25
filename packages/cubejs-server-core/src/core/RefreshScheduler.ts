@@ -8,6 +8,7 @@ import type { NormalizedQuery } from '@cubejs-backend/api-gateway';
 import {
   PreAggregationDescription,
   PreAggregationPartitionRangeLoader,
+  PreAggregationVersionStatus,
   QueuePriority
 } from '@cubejs-backend/query-orchestrator';
 
@@ -50,6 +51,11 @@ type PreAggregationsQueryingOptions = {
   preAggregationLoadConcurrency?: number,
 };
 
+type BuildJobsOptions = {
+  /** Report each partition's version status instead of building anything. */
+  dryRun?: boolean,
+};
+
 type RefreshQueries = {
   error?: string,
   partitions: PreAggregationDescription[],
@@ -81,6 +87,8 @@ type JobedPreAggregation = {
   type: string,
   timezone: string,
   dataSource: string,
+  /** Set on a dry run only */
+  versionStatus?: PreAggregationVersionStatus,
 };
 
 type PreAggJob = {
@@ -115,6 +123,7 @@ function getPreAggJobHashes(table: string) {
  */
 function getPreAggsJobsList(
   context: RequestContext,
+  jobContext: PreAggJob['context'],
   jobedPA: JobedPreAggregation[][][][]
 ): PreAggJob[] {
   const jobs: PreAggJob[] = [];
@@ -124,14 +133,14 @@ function getPreAggsJobsList(
         l3.forEach((pa) => {
           jobs.push({
             request: context.requestId,
-            context: { securityContext: context.securityContext },
+            context: jobContext,
             preagg: pa.preAggregation,
             table: pa.tableName,
             target: pa.targetTableName,
             ...getPreAggJobHashes(pa.targetTableName),
             updated: pa.lastUpdatedAt,
             key: pa.queryKey,
-            status: 'posted',
+            status: pa.versionStatus || 'posted',
             timezone: pa.timezone,
             dataSource: pa.dataSource,
           });
@@ -729,6 +738,8 @@ export class RefreshScheduler {
     const { securityContext } = context;
     const { queryIteratorState, concurrency, workerIndices } = queryingOptions;
 
+    await (await this.serverCore.getOrchestratorApi(context)).markRefreshActive();
+
     const preAggregationsLoadCacheByDataSource = {};
     const queriesCache: { [key: string]: Promise<PreAggregationDescription[][]> } = {};
     await Promise.all(R.range(0, concurrency)
@@ -849,11 +860,46 @@ export class RefreshScheduler {
 
   /**
    * Post pre-aggregations build jobs and returns jobs identifier objects.
+   * `jobContext` is what each job stores and reports back.
    */
   public async postBuildJobs(
     context: RequestContext,
-    queryingOptions: PreAggregationsQueryingOptions
+    queryingOptions: PreAggregationsQueryingOptions,
+    jobContext: PreAggJob['context'] = { securityContext: context.securityContext },
   ): Promise<string[]> {
+    const orchestratorApi = await this.serverCore.getOrchestratorApi(context);
+    const jobs = await this.buildJobs(context, queryingOptions, jobContext);
+
+    return jobs.map((job: PreAggJob) => {
+      const key = getPreAggJobToken(job);
+      orchestratorApi
+        .getQueryOrchestrator()
+        .getQueryCache()
+        .getCacheDriver()
+        .set(`PRE_AGG_JOB_${key}`, job, 86400);
+      return key;
+    });
+  }
+
+  /**
+   * The jobs `postBuildJobs` would post, each with the partition's version
+   * status (`done`, `outdated` or `missing_partition`) for the version its
+   * current refresh keys call for. Nothing is built or queued.
+   */
+  public async getBuildJobsStatus(
+    context: RequestContext,
+    queryingOptions: PreAggregationsQueryingOptions,
+    jobContext: PreAggJob['context'] = { securityContext: context.securityContext },
+  ): Promise<PreAggJob[]> {
+    return this.buildJobs(context, queryingOptions, jobContext, { dryRun: true });
+  }
+
+  protected async buildJobs(
+    context: RequestContext,
+    queryingOptions: PreAggregationsQueryingOptions,
+    jobContext: PreAggJob['context'],
+    { dryRun = false }: BuildJobsOptions = {},
+  ): Promise<PreAggJob[]> {
     const orchestratorApi = await this.serverCore.getOrchestratorApi(context);
     const preAggregations = await this.preAggregationPartitions(context, queryingOptions);
     if (queryingOptions.dateRange) {
@@ -910,7 +956,9 @@ export class RefreshScheduler {
                     const job = await orchestratorApi.executeQuery({
                       preAggregations: dependencies.concat([partition]),
                       cacheMode: 'stale-if-slow',
-                      forceBuildPreAggregations: true,
+                      // Without force, a partition that already has its target version is not rebuilt
+                      forceBuildPreAggregations: !dryRun && (queryingOptions.forceBuildPreAggregations ?? true),
+                      dryRun,
                       orphanedTimeout: 60 * 60,
                       requestId: context.requestId,
                       timezone: partition.timezone,
@@ -937,16 +985,9 @@ export class RefreshScheduler {
 
     return getPreAggsJobsList(
       context,
+      jobContext,
       <JobedPreAggregation[][][][]>jobedPAs,
-    ).map((job: PreAggJob) => {
-      const key = getPreAggJobToken(job);
-      orchestratorApi
-        .getQueryOrchestrator()
-        .getQueryCache()
-        .getCacheDriver()
-        .set(`PRE_AGG_JOB_${key}`, job, 86400);
-      return key;
-    });
+    );
   }
 
   /**

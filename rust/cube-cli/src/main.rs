@@ -155,6 +155,9 @@ enum Command {
     Dbt(commands::dbt::Args),
     /// Convert between a Cube data model and Apache Ossie
     Ossie(commands::ossie::Args),
+    /// Publish Cube views as Databricks Metric Views: targets, runs and promotion
+    #[command(name = "dbx-mv")]
+    DbxMv(commands::dbx_mv::Args),
     /// Run and inspect AI agent evals
     Evals(commands::evals::Args),
     /// Manage deployment environments and environment tokens
@@ -175,6 +178,9 @@ enum Command {
     Reports(commands::reports::Args),
     /// Browse and organize the deployment workspace
     Workspace(commands::workspace::Args),
+    /// Browse a deployment's Query History: API requests and the SQL they ran
+    #[command(name = "query-history", alias = "qh")]
+    QueryHistory(commands::query_history::Args),
     /// Manage scheduled notifications and their recipients
     #[command(alias = "notification")]
     Notifications(commands::notifications::Args),
@@ -253,6 +259,7 @@ impl Command {
             DataModel(_) => "data-model",
             Dbt(_) => "dbt",
             Ossie(_) => "ossie",
+            DbxMv(_) => "dbx-mv",
             Evals(_) => "evals",
             Environments(_) => "environments",
             Variables(_) => "variables",
@@ -260,6 +267,7 @@ impl Command {
             Workbooks(_) => "workbooks",
             Reports(_) => "reports",
             Workspace(_) => "workspace",
+            QueryHistory(_) => "query-history",
             Notifications(_) => "notifications",
             Users(_) => "users",
             Groups(_) => "groups",
@@ -368,6 +376,7 @@ async fn run(global: GlobalArgs, command: Command) -> Result<()> {
         DataModel(args) => commands::data_model::command(args, &ctx).await,
         Dbt(args) => commands::dbt::command(args, &ctx).await,
         Ossie(args) => commands::ossie::command(args, &ctx).await,
+        DbxMv(args) => commands::dbx_mv::command(args, &ctx).await,
         Evals(args) => commands::evals::command(args, &ctx).await,
         Environments(args) => commands::environments::command(args, &ctx).await,
         Variables(args) => commands::variables::command(args, &ctx).await,
@@ -375,6 +384,7 @@ async fn run(global: GlobalArgs, command: Command) -> Result<()> {
         Workbooks(args) => commands::workbooks::command(args, &ctx).await,
         Reports(args) => commands::reports::command(args, &ctx).await,
         Workspace(args) => commands::workspace::command(args, &ctx).await,
+        QueryHistory(args) => commands::query_history::command(args, &ctx).await,
         Notifications(args) => commands::notifications::command(args, &ctx).await,
         Users(args) => commands::users::command(args, &ctx).await,
         Groups(args) => commands::groups::command(args, &ctx).await,
