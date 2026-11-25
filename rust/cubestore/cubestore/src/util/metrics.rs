@@ -85,6 +85,18 @@ pub fn format_tag(name: &'static str, value: &str) -> String {
     format!("{}:{}", name, value)
 }
 
+/// Replaces the characters that delimit a DogStatsD packet, so a free-form value stays one tag.
+pub fn sanitize_tag_value(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            ',' | '|' | ':' | '#' | '@' => '_',
+            c if c.is_whitespace() => '_',
+            c => c,
+        })
+        .collect()
+}
+
 pub struct Counter {
     metric: Metric,
 }
@@ -95,6 +107,8 @@ impl Counter {
     }
 
     pub fn add_with_tags(&self, v: i64, tags: Option<&Vec<String>>) {
+        #[cfg(test)]
+        test_capture::record(self.metric.name, v, tags);
         if let Some(s) = sink() {
             s.send(&self.metric, v, tags)
         }
@@ -115,6 +129,8 @@ impl IntMetric {
     }
 
     pub fn report_with_tags(&self, v: i64, tags: Option<&Vec<String>>) {
+        #[cfg(test)]
+        test_capture::record(self.metric.name, v, tags);
         if let Some(s) = sink() {
             s.send(&self.metric, v, tags)
         }
@@ -269,5 +285,41 @@ mod tests {
     #[test]
     fn datadog_constant_tags_is_empty_for_statsd() {
         assert!(datadog_constant_tags(&Compatibility::StatsD, env).is_empty());
+    }
+}
+
+/// Records the samples of chosen metrics, so tests can assert what was reported.
+#[cfg(test)]
+pub mod test_capture {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static SAMPLES: Mutex<Option<HashMap<&'static str, Vec<(i64, Vec<String>)>>>> =
+        Mutex::new(None);
+
+    /// Starts recording samples of `name`. Only watched metrics are kept, so the whole suite
+    /// does not accumulate every sample it ever reports.
+    pub fn watch(name: &'static str) {
+        let mut samples = SAMPLES.lock().unwrap();
+        samples
+            .get_or_insert_with(HashMap::new)
+            .entry(name)
+            .or_default();
+    }
+
+    pub fn samples(name: &str) -> Vec<(i64, Vec<String>)> {
+        let samples = SAMPLES.lock().unwrap();
+        samples
+            .as_ref()
+            .and_then(|s| s.get(name))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn record(name: &'static str, value: i64, tags: Option<&Vec<String>>) {
+        let mut samples = SAMPLES.lock().unwrap();
+        if let Some(recorded) = samples.as_mut().and_then(|s| s.get_mut(name)) {
+            recorded.push((value, tags.cloned().unwrap_or_default()));
+        }
     }
 }
