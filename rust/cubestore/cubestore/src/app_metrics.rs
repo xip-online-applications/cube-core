@@ -176,6 +176,15 @@ pub static CACHESTORE_EVICTION_REMOVED_EXPIRED_KEYS: Counter =
     metrics::counter("cs.cachestore.eviction.expired.keys");
 pub static CACHESTORE_EVICTION_REMOVED_EXPIRED_SIZE: Counter =
     metrics::counter("cs.cachestore.eviction.expired.size");
+/// Keys in the cache and their raw size, as eviction counts them. Eviction starts once either
+/// passes its limit, so a flat line at `cs.cachestore.cache.keys.limit` means the cache is full
+/// and every new key pushes a live one out.
+pub static CACHESTORE_CACHE_KEYS: Gauge = metrics::gauge("cs.cachestore.cache.keys");
+pub static CACHESTORE_CACHE_RAW_SIZE: Gauge = metrics::gauge("cs.cachestore.cache.raw_size");
+/// `CUBESTORE_CACHE_MAX_KEYS` and `CUBESTORE_CACHE_MAX_SIZE`
+pub static CACHESTORE_CACHE_KEYS_LIMIT: Gauge = metrics::gauge("cs.cachestore.cache.keys.limit");
+pub static CACHESTORE_CACHE_RAW_SIZE_LIMIT: Gauge =
+    metrics::gauge("cs.cachestore.cache.raw_size.limit");
 pub static CACHESTORE_EVICTION_REMOVED_KEYS: Counter =
     metrics::counter("cs.cachestore.eviction.removed.keys");
 pub static CACHESTORE_EVICTION_REMOVED_SIZE: Counter =

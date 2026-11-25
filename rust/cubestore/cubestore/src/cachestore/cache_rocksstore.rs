@@ -374,6 +374,17 @@ impl RocksCacheStore {
 
         app_metrics::CACHESTORE_ROCKSDB_CF_DEFAULT_SIZE.report(cf_metadata.size as i64);
 
+        let eviction = &self.cache_eviction_manager;
+        app_metrics::CACHESTORE_CACHE_KEYS_LIMIT.report(eviction.get_limit_max_keys() as i64);
+        app_metrics::CACHESTORE_CACHE_RAW_SIZE_LIMIT.report(eviction.get_limit_max_size() as i64);
+        // Before the first load the counts cover only this process's writes: a sharp rise
+        // after every restart would read as cache growth
+        if eviction.stats_are_loaded().await {
+            app_metrics::CACHESTORE_CACHE_KEYS.report(eviction.get_stats_total_keys() as i64);
+            app_metrics::CACHESTORE_CACHE_RAW_SIZE
+                .report(eviction.get_stats_total_raw_size() as i64);
+        }
+
         Ok(())
     }
 
@@ -381,6 +392,8 @@ impl RocksCacheStore {
         app_metrics::CACHESTORE_ROCKSDB_ESTIMATE_LIVE_DATA_SIZE.report(0);
         app_metrics::CACHESTORE_ROCKSDB_LIVE_SST_FILES_SIZE.report(0);
         app_metrics::CACHESTORE_ROCKSDB_CF_DEFAULT_SIZE.report(0);
+        app_metrics::CACHESTORE_CACHE_KEYS.report(0);
+        app_metrics::CACHESTORE_CACHE_RAW_SIZE.report(0);
     }
 
     pub async fn stop_processing_loops(&self) {
@@ -3847,6 +3860,40 @@ mod tests {
         assert!(deadline > chrono::Utc::now() + chrono::Duration::seconds(500));
 
         RocksCacheStore::cleanup_test_cachestore("test_queue_add_and_retrieve_touches_then_claims");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cache_stats_are_loaded_by_first_eviction_run() -> Result<(), CubeError> {
+        init_test_logger().await;
+
+        let name = "test_cache_stats_are_loaded_by_first_eviction_run";
+        let config = Config::test(name).update_config(|mut config| {
+            config.cachestore_cache_max_keys = 512;
+            config.cachestore_cache_max_size = 32 << 20;
+            config
+        });
+        let (_, cachestore) = RocksCacheStore::prepare_test_cachestore(name, config);
+
+        cachestore
+            .cache_set(
+                CacheItem::new("test:1".to_string(), Some(3600), "a".to_string()),
+                false,
+            )
+            .await?;
+
+        let eviction = &cachestore.cache_eviction_manager;
+        assert_eq!(eviction.get_limit_max_keys(), 512);
+        assert_eq!(eviction.get_limit_max_size(), 32 << 20);
+        assert!(!eviction.stats_are_loaded().await);
+
+        cachestore.run_eviction().await?;
+
+        assert!(eviction.stats_are_loaded().await);
+        assert_eq!(eviction.get_stats_total_keys(), 1);
+
+        RocksCacheStore::cleanup_test_cachestore(name);
 
         Ok(())
     }
