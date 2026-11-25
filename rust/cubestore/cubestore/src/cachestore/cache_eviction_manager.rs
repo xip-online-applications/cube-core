@@ -343,6 +343,27 @@ impl CacheEvictionManager {
         self.stats_total_raw_size.load(Ordering::SeqCst)
     }
 
+    /// The stats above count from the first load of the keys on: before it they cover only
+    /// the keys written since startup.
+    pub async fn stats_are_loaded(&self) -> bool {
+        match *self.eviction_state.read().await {
+            EvictionState::Initial | EvictionState::Loading | EvictionState::LoadingFailed => false,
+            EvictionState::Ready
+            | EvictionState::EvictionStarted
+            | EvictionState::TruncationStarted => true,
+        }
+    }
+
+    /// The key count above which eviction starts (`CUBESTORE_CACHE_MAX_KEYS`)
+    pub fn get_limit_max_keys(&self) -> u32 {
+        self.limit_max_keys_soft
+    }
+
+    /// The raw size above which eviction starts (`CUBESTORE_CACHE_MAX_SIZE`)
+    pub fn get_limit_max_size(&self) -> u64 {
+        self.limit_max_size_soft
+    }
+
     pub fn new(config: &Arc<dyn ConfigObj>) -> Self {
         let ttl_buffer = Arc::new(tokio::sync::RwLock::new(TTLBuffer::new()));
         let (ttl_event_tx, mut ttl_event_rx) =
