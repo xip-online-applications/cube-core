@@ -817,8 +817,8 @@ describe('SubscriptionServer', () => {
       expect(unknownEvents(stdout)).toHaveLength(0);
     });
 
-    // Finding (e): unsubscribe arrives while the first poll is still in flight; the late subscribe() resurrects it
-    it('REPRO in-flight race: unsubscribe during a pending subscribe is unknown and the subscription is then re-created', async () => {
+    // Finding (e): unsubscribe arrives while the first load is still in flight
+    it('in-flight race: an unsubscribe during the first load finds the subscription, and the load does not re-create it', async () => {
       let release: () => void = () => undefined;
       const gate = new Promise<void>(r => { release = r; });
       const { server, store } = setup(async (args: any) => { await gate; await args.subscribe({ result: 1 }); });
@@ -829,11 +829,11 @@ describe('SubscriptionServer', () => {
       const pending = server.processMessage('c1', JSON.stringify({ method: 'subscribe', messageId: 'm1', params: { query: {} } }));
       await new Promise(r => setImmediate(r));
       await server.processMessage('c1', JSON.stringify({ unsubscribe: 'm1' }));
-      expect(unknownEvents(stdout)).toHaveLength(1);
+      expect(unknownEvents(stdout)).toHaveLength(0);
 
       release();
       await pending;
-      expect(await store.getSubscription('c1', 'm1')).toBeDefined();
+      expect(await store.getSubscription('c1', 'm1')).toBeUndefined();
     });
 
     // A disconnect (e.g. the keepalive terminating a dead connection) while a poll is in flight: the late
@@ -1060,7 +1060,7 @@ describe('SubscriptionServer', () => {
         await subscribe({ resultHash: 'hash' });
       });
 
-      const server = new SubscriptionServer(mockApiGateway, mockSendMessage, store, mockContextAcceptor);
+      const server = track(new SubscriptionServer(mockApiGateway, mockSendMessage, store, mockContextAcceptor, noopEventEmitter()));
 
       return { server, store, mockApiGateway, sentMessages, pendingLoads, finishLoad };
     };
@@ -1205,6 +1205,27 @@ describe('SubscriptionServer', () => {
       await inFlight;
 
       expect(sentMessages.filter((m) => m.messageId === '1' && m.message?.data)).toHaveLength(1);
+    });
+
+    it('should not re-run a subscription on a cube renewal while its load is in flight', async () => {
+      const { server, store, mockApiGateway, sentMessages, pendingLoads, finishLoad } = createServer();
+      await server.processMessage('conn-1', JSON.stringify({ authorization: 'token' }));
+      await store.setAuthContext('conn-1', { securityContext: { tenantId: 't1' } });
+
+      const { done: inFlight } = await startLoad(server, pendingLoads, subscribeMessage('1'));
+      await server.renewCubes([{ tenantId: 't1', cubes: ['Orders'] }]);
+      await flush();
+      expect(mockApiGateway.subscribe).toHaveBeenCalledTimes(1);
+
+      finishLoad();
+      await inFlight;
+      expect(sentMessages.filter((m) => m.messageId === '1' && m.message?.data)).toHaveLength(1);
+
+      // Once the load ended, a renewal re-runs it
+      await server.renewCubes([{ tenantId: 't1', cubes: ['Orders'] }]);
+      await flush();
+      expect(mockApiGateway.subscribe).toHaveBeenCalledTimes(2);
+      finishLoad();
     });
 
     it('should not re-send an unchanged result on a heartbeat re-send', async () => {

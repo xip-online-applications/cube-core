@@ -496,7 +496,10 @@ export class SubscriptionServer {
     const perTenant = updatedValues.map(({ tenantId, cubes }) => ({
       tenantId,
       cubes,
-      subs: this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes),
+      subs: this.subscriptionStore.getSubscriptionsByCubeName(tenantId, cubes)
+        // As in the tick: a subscription whose load is in flight is left to that load. The next
+        // tick re-runs it if that load read the data from before the renewal
+        .filter(subscription => !this.isSubscribeLoadInFlight(subscription.connectionId, subscription.message?.messageId)),
     }));
     const subs = perTenant.map(t => t.subs).flat();
 
