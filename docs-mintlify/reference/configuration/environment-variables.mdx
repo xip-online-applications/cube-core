@@ -2195,16 +2195,6 @@ If `true`, then use WebSocket for data fetching.
 | --------------- | ---------------------- | --------------------- |
 | `true`, `false` | `false`                | `false`               |
 
-## `CUBEJS_WEB_SOCKETS_MAX_SUBSCRIPTIONS`
-
-The maximum number of subscriptions a single WebSocket connection can hold. A
-subscribe request over the limit is rejected with a `429` error. Set to `0` to
-disable the limit.
-
-| Possible Values           | Default in Development | Default in Production |
-| ------------------------- | ---------------------- | --------------------- |
-| A non-negative integer    | `1000`                 | `1000`                |
-
 ## `CUBEJS_TESSERACT_SQL_PLANNER`
 
 Enables Tesseract, the [next-generation data modeling engine][link-tesseract],

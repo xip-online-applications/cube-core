@@ -409,12 +409,6 @@ const variables: Record<string, (...args: any) => any> = {
     const raw = (process.env.CUBEJS_WEB_SOCKETS_PING_INTERVAL || '').trim();
     return /^\d+$/.test(raw) ? Math.min(parseInt(raw, 10), 86400) : 30;
   },
-  // Most subscriptions one WebSocket connection may hold; 0 disables the cap. A non-negative
-  // integer, anything else falls back to the default instead of throwing
-  webSocketsMaxSubscriptions: () => {
-    const raw = (process.env.CUBEJS_WEB_SOCKETS_MAX_SUBSCRIPTIONS || '').trim();
-    return /^\d+$/.test(raw) ? parseInt(raw, 10) : 1000;
-  },
   serverHeadersTimeout: () => get('CUBEJS_SERVER_HEADERS_TIMEOUT')
     .asInt(),
   serverKeepAliveTimeout: () => get('CUBEJS_SERVER_KEEP_ALIVE_TIMEOUT')
