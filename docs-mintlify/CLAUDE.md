@@ -125,7 +125,7 @@ Make sure to use correct terms. On billing, pricing, and support pages, use **on
             - Parent
               - Preset
             - Dynamic controls
-          - AI summary
+          - Analysis
           - Layout
             - Spacer
             - Divider
@@ -134,9 +134,12 @@ Make sure to use correct terms. On billing, pricing, and support pages, use **on
             - Tabs container
     - **Dashboard**
       - Cross-filtering
+      - Drill-through
       - Full screen
-      - Scheduled refresh
-        - Data alert
+      - Schedules ("Refreshes, deliveries and alerts"; "schedule" where the kind is unknown)
+        - Refresh (notifies nobody; not the dashboard's auto-refresh)
+        - Dashboard delivery (sends by Email and/or Slack; How: "Every time")
+          - Alert (a dashboard delivery with a condition; How: "Alert on condition")
       - Review (revisions, reviewers, approvals)
     - **Semantic Model**
       - Semantic Model IDE (short: "IDE")
