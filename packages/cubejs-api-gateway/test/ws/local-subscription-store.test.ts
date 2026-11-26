@@ -1,5 +1,6 @@
 import {
   LocalSubscriptionStore,
+  LocalSubscriptionStoreConnection,
 } from '../../src/ws/local-subscription-store';
 
 const mockStatsd = { increment: jest.fn(), gauge: jest.fn() };
@@ -106,6 +107,107 @@ describe('LocalSubscriptionStore', () => {
     expect(connection.isClosed()).toBe(true);
     await store.setAuthContext('conn-1', { securityContext: {} });
     await expect(store.getAuthContext('conn-1')).resolves.toBeUndefined();
+  });
+
+  it('does not create a connection when subscribing, reading or setting auth of an unknown connection', async () => {
+    const store = new LocalSubscriptionStore();
+
+    await store.subscribe('unknown-conn', 'sub-1', { message: {}, state: {} });
+    await store.setAuthContext('unknown-conn', { securityContext: {} });
+    await expect(store.getAuthContext('unknown-conn')).resolves.toBeUndefined();
+    await expect(store.registerSubscription('unknown-conn', 'sub-2', {})).resolves.toBe('gone');
+
+    // eslint-disable-next-line dot-notation
+    expect(store['connections'].size).toBe(0);
+  });
+
+  it('returns the same connection until it disconnects, then ignores late work', async () => {
+    const store = new LocalSubscriptionStore();
+
+    const connection = store.connect('conn-1');
+    expect(store.connect('conn-1')).toBe(connection);
+
+    await store.disconnect('conn-1');
+
+    expect(connection.isClosed()).toBe(true);
+    await store.subscribe('conn-1', 'sub-1', { message: {}, state: {} });
+    await store.setAuthContext('conn-1', { securityContext: {} });
+    expect(store.getAllSubscriptions()).toEqual([]);
+    await expect(store.getAuthContext('conn-1')).resolves.toBeUndefined();
+  });
+
+  it('a subscribe that finishes after the unsubscribe does not re-add the subscription', async () => {
+    const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
+
+    await store.subscribe('conn-1', 'sub-1', { message: {}, state: {} });
+    await store.unsubscribe('conn-1', 'sub-1');
+    await store.subscribe('conn-1', 'sub-1', { message: {}, state: { late: true } });
+
+    expect(await store.getSubscription('conn-1', 'sub-1')).toBeUndefined();
+    await expect(store.registerSubscription('conn-1', 'sub-1', {})).resolves.toBe('unsubscribed');
+  });
+
+  it('registers a pending subscription that is not polled until it stores a state', async () => {
+    const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
+
+    await expect(store.registerSubscription('conn-1', 'sub-1', { method: 'subscribe' })).resolves.toBe('registered');
+    expect(await store.getSubscription('conn-1', 'sub-1')).toMatchObject({ pending: true });
+    expect(store.getAllSubscriptions()).toEqual([]);
+
+    await store.subscribe('conn-1', 'sub-1', { message: { method: 'subscribe' }, state: { resultHash: 'h' } });
+    expect(store.getAllSubscriptions()).toHaveLength(1);
+
+    // Re-registering a live subscription keeps its state and keeps it polled
+    await store.registerSubscription('conn-1', 'sub-1', { method: 'subscribe' });
+    expect(await store.getSubscription('conn-1', 'sub-1')).toMatchObject({ pending: false, state: { resultHash: 'h' } });
+
+    await store.abandonPendingSubscription('conn-1', 'sub-1');
+    expect(store.getAllSubscriptions()).toHaveLength(1);
+  });
+
+  it('abandons a registration whose first load never stored a state', async () => {
+    const store = new LocalSubscriptionStore();
+    store.connect('conn-1');
+
+    await store.registerSubscription('conn-1', 'sub-1', {});
+    await store.abandonPendingSubscription('conn-1', 'sub-1');
+
+    expect(await store.getSubscription('conn-1', 'sub-1')).toBeUndefined();
+  });
+
+  it('caps the subscriptions per connection; 0 disables the cap', async () => {
+    const store = new LocalSubscriptionStore({ maxSubscriptionsPerConnection: 2 });
+    store.connect('conn-1');
+    store.connect('conn-2');
+
+    await expect(store.registerSubscription('conn-1', 'a', {})).resolves.toBe('registered');
+    await expect(store.registerSubscription('conn-1', 'b', {})).resolves.toBe('registered');
+    await expect(store.registerSubscription('conn-1', 'c', {})).resolves.toBe('limit_exceeded');
+    await expect(store.registerSubscription('conn-1', 'a', {})).resolves.toBe('registered');
+    await expect(store.registerSubscription('conn-2', 'c', {})).resolves.toBe('registered');
+
+    const unlimited = new LocalSubscriptionStore({ maxSubscriptionsPerConnection: 0 });
+    unlimited.connect('conn-1');
+
+    for (let i = 0; i < 5; i++) {
+      await expect(unlimited.registerSubscription('conn-1', `s${i}`, {})).resolves.toBe('registered');
+    }
+    store.close();
+    unlimited.close();
+  });
+
+  it('remembers a bounded number of unsubscribed ids', () => {
+    const connection = new LocalSubscriptionStoreConnection();
+
+    for (let i = 0; i <= 10_000; i++) {
+      connection.markUnsubscribed(`s${i}`);
+    }
+
+    expect(connection.isUnsubscribed('s0')).toBe(false);
+    expect(connection.isUnsubscribed('s1')).toBe(true);
+    expect(connection.isUnsubscribed('s10000')).toBe(true);
   });
 
   it('unsubscribes existing subscription', async () => {

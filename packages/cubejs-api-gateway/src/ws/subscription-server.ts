@@ -182,6 +182,12 @@ export class SubscriptionServer {
     let dispatched = false;
 
     try {
+      // A server poll or renew for a connection that disconnected (or never authorized) since the
+      // subscription was listed: drop it quietly, and don't create the connection again
+      if (isSubscription && !(await this.subscriptionStore.getAuthContext(connectionId))) {
+        return;
+      }
+
       const connection = this.subscriptionStore.connect(connectionId);
 
       if ('authorization' in message) {
@@ -220,13 +226,6 @@ export class SubscriptionServer {
       }
 
       authContext = await this.subscriptionStore.getAuthContext(connectionId);
-      if (!authContext && isSubscription) {
-        // A server poll (or cube renewal) for a connection without an auth context: the connection was
-        // disconnected after the poll picked up its subscription, and connect() above re-created it empty.
-        // Drop it quietly instead of answering 'Not authorized' (and recording an error) and leaking it
-        await this.subscriptionStore.disconnect(connectionId);
-        return;
-      }
 
       if (!authContext) {
         this.recordFailure({
@@ -294,25 +293,51 @@ export class SubscriptionServer {
         collectedParams.cacheMode = collectedParams.cache;
         delete collectedParams.cache;
       }
+      // A new subscription is registered before its first load, so an unsubscribe that arrives
+      // during the load finds it. Server polls (isSubscription) re-run an existing subscription
+      const registersSubscription = message.method === 'subscribe' && !isSubscription;
+      if (registersSubscription && this.subscriptionStore.registerSubscription) {
+        const registration = await this.subscriptionStore.registerSubscription(connectionId, subscriptionId, message);
+        if (registration === 'gone' || registration === 'unsubscribed') {
+          return;
+        }
+
+        if (registration === 'limit_exceeded') {
+          throw new CubejsHandlerError(
+            429,
+            'Too Many Subscriptions',
+            'Subscription limit reached for this connection: unsubscribe from a query before subscribing to another one'
+          );
+        }
+      }
+
       dispatched = true;
-      await this.apiGateway[method]({
-        ...collectedParams,
-        connectionId,
-        context,
-        signedWithPlaygroundAuthSecret: authContext.signedWithPlaygroundAuthSecret,
-        isSubscription,
-        apiType: 'ws',
-        res: this.resultFn(connectionId, message.messageId, requestId),
-        subscriptionState: async () => {
-          const subscription = await this.subscriptionStore.getSubscription(connectionId, subscriptionId);
-          return subscription && subscription.state;
-        },
-        subscribe: async (state) => this.subscriptionStore.subscribe(connectionId, subscriptionId, {
-          message,
-          state
-        }),
-        unsubscribe: async () => this.subscriptionStore.unsubscribe(connectionId, subscriptionId)
-      });
+
+      try {
+        await this.apiGateway[method]({
+          ...collectedParams,
+          connectionId,
+          context,
+          signedWithPlaygroundAuthSecret: authContext.signedWithPlaygroundAuthSecret,
+          isSubscription,
+          apiType: 'ws',
+          res: this.resultFn(connectionId, message.messageId, requestId),
+          subscriptionState: async () => {
+            const subscription = await this.subscriptionStore.getSubscription(connectionId, subscriptionId);
+            return subscription && subscription.state;
+          },
+          subscribe: async (state) => this.subscriptionStore.subscribe(connectionId, subscriptionId, {
+            message,
+            state
+          }),
+          unsubscribe: async () => this.subscriptionStore.unsubscribe(connectionId, subscriptionId)
+        });
+      } finally {
+        if (registersSubscription) {
+          // The first load failed before storing a state: don't leave a registration that is never polled
+          await this.subscriptionStore.abandonPendingSubscription?.(connectionId, subscriptionId);
+        }
+      }
 
       await this.sendMessage(connectionId, { messageProcessedId: message.messageId });
     } catch (e) {
